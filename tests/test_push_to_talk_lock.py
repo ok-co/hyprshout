@@ -107,6 +107,7 @@ class PushToTalkLockTests(unittest.TestCase):
         app._recording_starting = app._playback_shutdown = False
         app._start_settled = threading.Event(); app._start_settled.set(); app._start_owner = None
         app._current_language_override = None
+        app._current_translate = False
         app._ptt_press_time = None
         app._ptt_locked = False
         if mock_start:

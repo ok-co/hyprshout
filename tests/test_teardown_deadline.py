@@ -166,6 +166,7 @@ class MidRecordingWedgeTests(unittest.TestCase):
         app.is_recording = True
         app._recording_session = object()
         app._current_language_override = None
+        app._current_translate = False
         app._ptt_reset = mock.Mock()
         app._cleanup_recording_state = mock.Mock()
         app._wait_for_start_settled = mock.Mock()

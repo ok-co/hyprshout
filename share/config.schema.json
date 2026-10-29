@@ -48,6 +48,11 @@
       "default": null,
       "description": "Language code for secondary shortcut (e.g., 'it', 'en', 'fr')"
     },
+    "translate_shortcut": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Optional hotkey that records like primary_shortcut and has the LLM translate the dictation into llm_translate_language before paste (e.g., 'SUPER+ALT+T'). Uses the llm_refine_* provider settings, whether or not llm_refine_enabled is on."
+    },
     "cancel_shortcut": {
       "type": ["string", "null"],
       "default": null,
@@ -265,6 +270,12 @@
       "maximum": 300,
       "default": 15,
       "description": "Seconds to wait for the LLM. On timeout or any error the original text is pasted."
+    },
+    "llm_translate_language": {
+      "type": "string",
+      "minLength": 1,
+      "default": "English",
+      "description": "Language the LLM translates into for translate_shortcut and 'hyprwhspr record start/toggle --translate', given as a name or code (e.g. 'English', 'German', 'pt-BR'). Other dictations are not translated."
     },
     "clipboard_behavior": {
       "type": "boolean",

@@ -60,6 +60,23 @@ Configure via CLI:
 hyprwhspr config secondary-shortcut
 ```
 
+## Translate shortcut
+
+A hotkey that records like the primary shortcut, then has the LLM translate the dictation before it's pasted.
+The primary shortcut keeps pasting what you said:
+
+```jsonc
+{
+    "translate_shortcut": "SUPER+ALT+T",
+    "llm_translate_language": "English"
+}
+```
+
+It needs an LLM provider set up with `hyprwhspr config llm`. See [Translation](LLM_REFINEMENT.md#translation).
+
+With `external_bindings` on, `translate_shortcut` is ignored like every other shortcut setting; bind a
+[translate key in your compositor](#translate-key) instead.
+
 ## Cancel shortcut
 
 Bail out of an accidental recording — discards the audio and plays the error sound:
@@ -130,6 +147,36 @@ bindd = SUPER ALT, D, Speech-to-text, exec, /usr/lib/hyprwhspr/config/hyprland/h
 bindd = SUPER ALT, E, Speech-to-text-submit, exec, echo "submit" > "$XDG_RUNTIME_DIR/hyprwhspr/recording_control"
 ```
 
+### Translate key
+
+A second key whose recordings the LLM translates into `llm_translate_language`
+([Translation](LLM_REFINEMENT.md#translation)). Bind it next to your primary key, matching `recording_mode`.
+
+Toggle, auto (tapped), continuous and long-form:
+
+```bash
+bindd = SUPER ALT, T, Speech-to-text (translate), exec, hyprwhspr record toggle --translate
+```
+
+Push-to-talk, and auto when held: the press writes `translate` instead of `start`, the release is unchanged:
+
+```bash
+bind = SUPER ALT, T, exec, echo "translate" > "$XDG_RUNTIME_DIR/hyprwhspr/recording_control"
+bindr = SUPER ALT, T, exec, echo "release" > "$XDG_RUNTIME_DIR/hyprwhspr/recording_control"
+```
+
+With `hyprland.lua`:
+
+```lua
+hl.bind("SUPER + ALT + T", hl.dsp.exec_cmd("hyprwhspr record toggle --translate"), { description = "Speech-to-text (translate)" })
+```
+
+- The key that starts a recording decides whether it's translated: a recording started with the primary key and
+  stopped with the translate key is pasted as spoken, and the other way round
+- In long-form mode the translate key starts a translated session; pause, resume and submit it with your usual keys
+- Combine with a language: `hyprwhspr record start --translate --lang it`, or write `translate:it` to the FIFO
+- A daemon from before this feature ignores `translate`; restart the service after updating
+
 ### Cancel recording (all modes)
 
 Discard audio without transcribing:
@@ -152,11 +199,13 @@ Bind [`hyprwhspr record`](CLI.md#recording) in KDE, GNOME, sxhkd, Espanso or any
 # Example: KDE custom shortcuts
 # English: hyprwhspr record toggle
 # Italian: hyprwhspr record start --lang it
+# Translate: hyprwhspr record toggle --translate
 # Cancel:  hyprwhspr record cancel
 
 # Example: Hyprland config
 bind = SUPER ALT, D, exec, hyprwhspr record toggle
 bind = SUPER ALT, I, exec, hyprwhspr record start --lang it
+bind = SUPER ALT, T, exec, hyprwhspr record toggle --translate
 bind = SUPER, ESCAPE, exec, hyprwhspr record cancel
 ```
 

@@ -13,6 +13,9 @@ hyprwhspr record start --lang it    # Italian
 hyprwhspr record start --lang de    # German
 hyprwhspr record start --lang es    # Spanish
 
+# Start recording whose dictation the LLM translates (llm_translate_language)
+hyprwhspr record start --translate
+
 # Stop recording (transcribes and pastes)
 hyprwhspr record stop
 
@@ -25,6 +28,7 @@ hyprwhspr record cancel
 # Toggle recording on/off
 hyprwhspr record toggle
 hyprwhspr record toggle --lang it   # Toggle with language override
+hyprwhspr record toggle --translate # Toggle a translated recording
 
 # Check current status
 hyprwhspr record status

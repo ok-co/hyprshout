@@ -117,11 +117,13 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
         self.text_injector = TextInjector(self.config)
         self.global_shortcuts = None
         self.secondary_shortcuts = None
+        self._translate_shortcuts = None
         self._cancel_shortcuts = None
 
         # Application state
         self.is_recording = False
         self._current_language_override = None  # Language override for current recording session
+        self._current_translate = False  # Current recording session is translated by the LLM
         self.is_processing = False
         self._file_transcription_active = False
         # Long-form keeps its own state machine, so it claims this flag under
@@ -466,6 +468,9 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
             
             # Stop secondary shortcuts
             cleanup_step("stop secondary shortcuts", lambda: call_optional('secondary_shortcuts', 'stop'))
+
+            # Stop translate shortcut
+            cleanup_step("stop translate shortcut", lambda: call_optional('_translate_shortcuts', 'stop'))
 
             # Stop cancel shortcut
             cleanup_step("stop cancel shortcut", lambda: call_optional('_cancel_shortcuts', 'stop'))

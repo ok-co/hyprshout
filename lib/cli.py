@@ -122,6 +122,8 @@ def main():
              'prompt: edit your own prompt; disable; forget-key')
     config_llm_parser.add_argument('text', nargs='?', default=None,
                                    help='Text for test (default: piped stdin or a sample)')
+    config_llm_parser.add_argument('--translate', action='store_true',
+                                   help='With test: also translate into llm_translate_language')
 
     # waybar command
     waybar_parser = subparsers.add_parser('waybar', help='Waybar integration')
@@ -204,12 +206,16 @@ def main():
     record_start_parser = record_subparsers.add_parser('start', help='Start recording')
     record_start_parser.add_argument('--lang', dest='language', metavar='CODE',
                                      help='Language code for transcription (e.g., en, it, de)')
+    record_start_parser.add_argument('--translate', action='store_true',
+                                     help='Translate the dictation with the LLM (llm_translate_language)')
     record_subparsers.add_parser('stop', help='Stop recording')
     record_subparsers.add_parser('release', help='Key-up for push-to-talk bindings: stop, or latch a long hold')
     record_subparsers.add_parser('cancel', help='Cancel recording and discard audio')
     record_toggle_parser = record_subparsers.add_parser('toggle', help='Toggle recording on/off')
     record_toggle_parser.add_argument('--lang', dest='language', metavar='CODE',
                                       help='Language code for transcription (e.g., en, it, de)')
+    record_toggle_parser.add_argument('--translate', action='store_true',
+                                      help='Translate the dictation with the LLM (llm_translate_language)')
     record_capture_parser = record_subparsers.add_parser(
         'capture',
         help='Trigger recording and stream the transcription to stdout (suppresses text injection)'
@@ -335,7 +341,7 @@ def main():
                 sys.exit(run_diagnostics(json_output=args.json_output))
             if args.config_action == 'llm':
                 from cli.llm import llm_command
-                llm_command(args.llm_action, args.text)
+                llm_command(args.llm_action, args.text, translate=getattr(args, 'translate', False))
             else:
                 from cli.config import config_command
                 config_command(args.config_action, show_all=getattr(args, 'show_all', False))
@@ -437,7 +443,8 @@ def main():
                     trace_processing=getattr(args, 'trace_processing', False),
                 )
             else:
-                record_command(args.record_action, language=getattr(args, 'language', None))
+                record_command(args.record_action, language=getattr(args, 'language', None),
+                               translate=getattr(args, 'translate', False))
         elif args.command == 'uninstall':
             from cli.uninstall import uninstall_command
             uninstall_command(
