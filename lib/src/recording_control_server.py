@@ -14,7 +14,7 @@ class RecordingControlServer:
     """Own the recording-control FIFO and single-subscriber capture socket."""
 
     _VALID_COMMANDS = {
-        "start", "stop", "release", "cancel", "submit", "model_unload", "model_reload",
+        "start", "translate", "stop", "release", "cancel", "submit", "model_unload", "model_reload",
     }
 
     def __init__(self, fifo_path, socket_path, on_command, is_recording,
@@ -41,15 +41,19 @@ class RecordingControlServer:
 
     @classmethod
     def parse_commands(cls, raw_data):
-        """Return the last valid ``(action, language)`` command, if any."""
+        """Return the last valid ``(action, language)`` command, if any.
+
+        ``translate`` starts like ``start`` and also takes ``:<language>``.
+        """
         parsed = []
         for line in (line.strip() for line in raw_data.splitlines()):
             if not line:
                 continue
             lower = line.lower()
-            if lower.startswith("start:"):
+            verb = lower.split(":", 1)[0]
+            if ":" in lower and verb in ("start", "translate"):
                 language = line.split(":", 1)[1].strip() or None
-                parsed.append(("start", language))
+                parsed.append((verb, language))
             elif lower in cls._VALID_COMMANDS:
                 parsed.append((lower, None))
         return parsed[-1] if parsed else None

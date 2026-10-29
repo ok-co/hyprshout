@@ -20,7 +20,7 @@ except ImportError:
     from output_control import log_info, log_success, log_error
 
 
-def record_command(action: str, language: str = None):
+def record_command(action: str, language: str = None, translate: bool = False):
     """
     Control recording via CLI - useful when keyboard grab is not possible.
 
@@ -33,6 +33,7 @@ def record_command(action: str, language: str = None):
     Args:
         action: The action to perform (start, stop, release, cancel, toggle, status)
         language: Optional language code for transcription (e.g., 'en', 'it', 'de')
+        translate: Start a recording the LLM translates (start and toggle)
     """
     import stat
 
@@ -97,7 +98,12 @@ def record_command(action: str, language: str = None):
             return False
 
     # Build start command with optional language
-    start_cmd = f'start:{language}' if language else 'start'
+    start_verb = 'translate' if translate else 'start'
+    start_cmd = f'{start_verb}:{language}' if language else start_verb
+    details = [f"language: {language}"] if language else []
+    if translate:
+        details.append("translate")
+    started_msg = f"Recording started ({', '.join(details)})" if details else "Recording started"
 
     # The status file lags the daemon, so it never gates these; the daemon
     # ignores a start while recording and a stop/cancel while idle.
@@ -105,8 +111,7 @@ def record_command(action: str, language: str = None):
         expected = not is_recording()
         if send_control(start_cmd):
             if expected:
-                msg = f"Recording started (language: {language})" if language else "Recording started"
-                log_success(msg)
+                log_success(started_msg)
             else:
                 log_info("Start sent")
 
@@ -137,8 +142,7 @@ def record_command(action: str, language: str = None):
                 log_success("Recording stopped")
         else:
             if send_control(start_cmd):
-                msg = f"Recording started (language: {language})" if language else "Recording started"
-                log_success(msg)
+                log_success(started_msg)
 
     elif action == 'status':
         if is_recording():

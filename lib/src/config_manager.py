@@ -53,6 +53,7 @@ def build_default_config():
         'primary_shortcut': 'SUPER+ALT+D',
         'secondary_shortcut': None,  # Optional secondary hotkey for language-specific recording (e.g., "SUPER+ALT+I")
         'secondary_language': None,  # Language code for secondary shortcut (e.g., "it", "en", "fr", etc.)
+        'translate_shortcut': None,  # Optional hotkey that records and has the LLM translate the dictation (e.g., "SUPER+ALT+T")
         'cancel_shortcut': None,  # Optional shortcut to cancel recording and discard audio (e.g., "SUPER+ESCAPE")
         'recording_mode': 'toggle',  # 'toggle' | 'push_to_talk' | 'auto' | 'continuous' (auto-paste on silence)
         'continuous_silence_seconds': 2.0,  # Seconds of silence before auto-pasting in continuous mode
@@ -115,6 +116,7 @@ def build_default_config():
         'llm_refine_extra_instructions': '',   # Appended to whichever prompt is active
         'llm_refine_temperature': None,        # Null = provider default
         'llm_refine_timeout': 15,              # Seconds; the original text is pasted on timeout
+        'llm_translate_language': 'English',   # Target of translate_shortcut / record start --translate
         'clipboard_behavior': False,  # Boolean: true = clear clipboard after delay, false = keep (current behavior)
         'clipboard_clear_delay': 5.0,  # Float: seconds to wait before clearing clipboard (only used if clipboard_behavior is true)
         'clipboard_settle_delay': 0.15,  # Seconds between clipboard copy and paste shortcut

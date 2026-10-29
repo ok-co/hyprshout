@@ -14,7 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib" / "src"))
 
 import llm_refiner
-from llm_refiner import DEFAULT_PROMPT, LLMRefineError, build_system_prompt, refine_text, resolve_target
+from llm_refiner import (DEFAULT_PROMPT, LLMRefineError, build_system_prompt, refine_text, resolve_target,
+                         translate_language)
 from realtime_protocols import live_typing_conflict
 from text_injector import InjectionOutcome, _PostTranscriptionHookOutcome
 
@@ -129,6 +130,35 @@ class SystemPromptTests(unittest.TestCase):
                 build_system_prompt(settings(llm_refine_prompt_file=str(empty)))
 
 
+class TranslationPromptTests(unittest.TestCase):
+    def test_translation_is_appended_only_when_asked(self):
+        self.assertEqual(build_system_prompt(settings(), translate=False), DEFAULT_PROMPT)
+        prompt = build_system_prompt(settings(), translate=True)
+        self.assertTrue(prompt.startswith(DEFAULT_PROMPT))
+        self.assertIn("translate it into English", prompt)
+        self.assertIn("overrides any instruction above to keep the original language", prompt)
+
+    def test_configured_language_and_custom_prompts_are_honoured(self):
+        get = settings(llm_translate_language=" German ", llm_refine_prompt="Make it formal.",
+                       llm_refine_extra_instructions="Use Swiss spelling.")
+        prompt = build_system_prompt(get, translate=True)
+        self.assertTrue(prompt.startswith("Make it formal.\n\nTranslation:"))
+        self.assertIn("translate it into German", prompt)
+        self.assertTrue(prompt.endswith("Use Swiss spelling."))
+
+    def test_blank_language_falls_back_to_english(self):
+        for value in (None, "", "   "):
+            with self.subTest(value=value):
+                self.assertEqual(translate_language(settings(llm_translate_language=value)), "English")
+
+    def test_translate_request_carries_the_translation_prompt(self):
+        opener = RecordingOpener()
+        refine_text("ciao a tutti", settings(llm_translate_language="French"),
+                    credential_lookup=lambda name: KEY, opener=opener, translate=True)
+        self.assertIn("translate it into French", opener.body["messages"][0]["content"])
+        self.assertEqual(opener.body["messages"][1]["content"], "<transcript>\nciao a tutti\n</transcript>")
+
+
 class RefineTextTests(unittest.TestCase):
     def refine(self, text="so um hello", opener=None, key=KEY, **values):
         opener = opener or RecordingOpener()
@@ -239,7 +269,31 @@ class InjectorRefinementTests(unittest.TestCase):
         injector.config_manager = ConfigStub({"llm_refine_enabled": True})
         with mock.patch("text_injector.llm_refiner.refine_text", return_value="Hello.") as refine:
             self.assertEqual(injector._refine_with_llm("hello"), "Hello.")
-        refine.assert_called_once_with("hello", injector.config_manager.get_setting)
+        refine.assert_called_once_with("hello", injector.config_manager.get_setting, translate=False)
+
+    def test_translation_runs_even_with_refinement_disabled(self):
+        injector = make_injector()
+        injector.config_manager = ConfigStub({"llm_refine_enabled": False})
+        with mock.patch("text_injector.llm_refiner.refine_text", return_value="Hello.") as refine:
+            self.assertEqual(injector._refine_with_llm("ciao", translate=True), "Hello.")
+        refine.assert_called_once_with("ciao", injector.config_manager.get_setting, translate=True)
+
+    def test_failed_translation_pastes_the_original(self):
+        injector = make_injector()
+        injector.config_manager = ConfigStub({})
+        with mock.patch("text_injector.llm_refiner.refine_text", side_effect=LLMRefineError("HTTP 500")), \
+                mock.patch("text_injector.log") as log:
+            self.assertEqual(injector._refine_with_llm("ciao", translate=True), "ciao")
+        self.assertIn("Translation failed", log.call_args[0][0])
+
+    def test_inject_text_passes_translate_through_to_the_llm(self):
+        injector = make_injector()
+        injector.config_manager = ConfigStub({"append_trailing_space": False})
+        with mock.patch("text_injector.llm_refiner.refine_text", return_value="Hello.") as refine, \
+                mock.patch.object(injector, "_inject_via_clipboard_and_hotkey", return_value=True) as inject:
+            self.assertEqual(injector.inject_text("ciao", translate=True), InjectionOutcome.INJECTED)
+        self.assertTrue(refine.call_args.kwargs["translate"])
+        inject.assert_called_once_with("Hello.", retain=True)
 
     def test_failure_keeps_original_and_logs_no_dictation(self):
         injector = make_injector()
@@ -324,6 +378,15 @@ class LlmCliTests(unittest.TestCase):
                 mock.patch("sys.stdout", new_callable=io.StringIO):
             self.assertFalse(llm.test_llm("hello", config))
         self.assertIn("no API key", log_error.call_args[0][0])
+
+    def test_test_command_can_translate(self):
+        config = self.config()
+        with mock.patch.object(llm, "refine_text", return_value="Hello.") as refine, \
+                mock.patch.object(llm, "log_info"), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            self.assertTrue(llm.test_llm("ciao", config, translate=True))
+        self.assertTrue(refine.call_args.kwargs["translate"])
+        self.assertIn("Output: Hello.", out.getvalue())
 
     def test_forget_key_deletes_the_configured_providers_credential(self):
         config = self.config(llm_refine_provider="custom")

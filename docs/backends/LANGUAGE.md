@@ -64,6 +64,9 @@ Translate non-English speech into English:
 > **Note**: Supported by `faster-whisper` and `pywhispercpp` backends. `qwen3-asr` honours `language` but has no
 > translation task. `language` and `task` are independent — setting a non-English language does not imply translation.
 
+To translate into other languages, with any backend, or only when you press a dedicated hotkey, use
+[LLM translation](../usage/LLM_REFINEMENT.md#translation).
+
 ## Language-specific prompts
 
 Set a per-language prompt using `whisper_prompt_{lang}`:

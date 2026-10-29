@@ -60,6 +60,20 @@ Configure via CLI:
 hyprwhspr config secondary-shortcut
 ```
 
+## Translate shortcut
+
+A hotkey that records like the primary shortcut, then has the LLM translate the dictation before it's pasted.
+The primary shortcut keeps pasting what you said:
+
+```jsonc
+{
+    "translate_shortcut": "SUPER+ALT+T",
+    "llm_translate_language": "English"
+}
+```
+
+It needs an LLM provider set up with `hyprwhspr config llm`. See [Translation](LLM_REFINEMENT.md#translation).
+
 ## Cancel shortcut
 
 Bail out of an accidental recording — discards the audio and plays the error sound:
@@ -152,11 +166,13 @@ Bind [`hyprwhspr record`](CLI.md#recording) in KDE, GNOME, sxhkd, Espanso or any
 # Example: KDE custom shortcuts
 # English: hyprwhspr record toggle
 # Italian: hyprwhspr record start --lang it
+# Translate: hyprwhspr record toggle --translate
 # Cancel:  hyprwhspr record cancel
 
 # Example: Hyprland config
 bind = SUPER ALT, D, exec, hyprwhspr record toggle
 bind = SUPER ALT, I, exec, hyprwhspr record start --lang it
+bind = SUPER ALT, T, exec, hyprwhspr record toggle --translate
 bind = SUPER, ESCAPE, exec, hyprwhspr record cancel
 ```
 

@@ -1501,14 +1501,18 @@ except Exception:
             if self._stream is session:
                 self._stream = None
 
-    def inject_text(self, text: str) -> InjectionOutcome:
-        """Prepare, retain and deliver one dictation at a time."""
+    def inject_text(self, text: str, translate: bool = False) -> InjectionOutcome:
+        """Prepare, retain and deliver one dictation at a time.
+
+        translate=True sends it through the LLM to llm_translate_language,
+        whether or not llm_refine_enabled is on.
+        """
         if self.stream_busy():
             return InjectionOutcome.FAILED
         with self._delivery_lock:
             if self.stream_busy():
                 return InjectionOutcome.FAILED
-            return self._prepare_and_inject_text(text)
+            return self._prepare_and_inject_text(text, translate=translate)
 
     def inject_stream_chunk(self, session: _StreamSession, text: str, final: bool = False) -> InjectionOutcome:
         """Deliver one chunk of a dictation typed while recording.
@@ -1699,12 +1703,13 @@ except Exception:
         finally:
             self._delivery_lock.release()
 
-    def _prepare_and_inject_text(self, text: str) -> InjectionOutcome:
+    def _prepare_and_inject_text(self, text: str, translate: bool = False) -> InjectionOutcome:
         """
         Inject text into the currently focused application
 
         Args:
             text: Text to inject
+            translate: Translate it with the LLM before the hook and paste
 
         Returns:
             InjectionOutcome.INJECTED if pasted, CONSUMED if a post-transcription
@@ -1722,7 +1727,7 @@ except Exception:
         if not processed_text.strip():
             log("No text to inject (empty after preprocessing)")
             return InjectionOutcome.INJECTED
-        processed_text = self._refine_with_llm(processed_text)
+        processed_text = self._refine_with_llm(processed_text, translate=translate)
         hook_result = self._run_post_transcription_hook(processed_text)
         if hook_result.outcome == _PostTranscriptionHookOutcome.CONSUME:
             return InjectionOutcome.CONSUMED
@@ -1768,27 +1773,31 @@ except Exception:
         """
         return preprocess_text(text, self.config_manager)
 
-    def _refine_with_llm(self, text: str) -> str:
+    def _refine_with_llm(self, text: str, translate: bool = False) -> str:
         """Rewrite the dictation with the configured LLM (llm_refine_*).
 
-        Any failure keeps the original text; the log carries the reason, never
-        the dictation itself.
+        translate=True runs the pass even with llm_refine_enabled off, and
+        translates into llm_translate_language. Any failure keeps the original
+        text; the log carries the reason, never the dictation itself.
         """
         if not (self.config_manager and text):
             return text
         get_setting = self.config_manager.get_setting
-        if not llm_refiner.is_enabled(get_setting):
+        if not (translate or llm_refiner.is_enabled(get_setting)):
             return text
+        action = 'Translation' if translate else 'Refinement'
         started = time.monotonic()
         try:
-            refined = llm_refiner.refine_text(text, get_setting)
+            refined = llm_refiner.refine_text(text, get_setting, translate=translate)
         except llm_refiner.LLMRefineError as e:
-            log(f"[LLM] Refinement failed, pasting original text: {e}")
+            log(f"[LLM] {action} failed, pasting original text: {e}")
             return text
         except Exception as e:
-            log(f"[LLM] Refinement failed, pasting original text: {type(e).__name__}")
+            log(f"[LLM] {action} failed, pasting original text: {type(e).__name__}")
             return text
-        log(f"[LLM] Refined dictation in {time.monotonic() - started:.1f}s "
+        done = (f"Translated dictation into {llm_refiner.translate_language(get_setting)}"
+                if translate else "Refined dictation")
+        log(f"[LLM] {done} in {time.monotonic() - started:.1f}s "
             f"({len(text)} -> {len(refined)} chars)")
         return refined
 

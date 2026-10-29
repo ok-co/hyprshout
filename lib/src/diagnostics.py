@@ -141,16 +141,17 @@ def validate_config(path=None):
                     and protocol is not None and protocol.per_recording_session):
                 findings.append(finding('config.realtime_continuous', 'error',
                                         f'{protocol.id} streams one recording at a time; use toggle, push_to_talk or auto.'))
-    if config['llm_refine_enabled'] is True:
+    if config['llm_refine_enabled'] is True or config['translate_shortcut']:
+        feature = 'LLM refinement' if config['llm_refine_enabled'] is True else 'LLM translation (translate_shortcut)'
         try:
             target = resolve_llm_target(lambda key, default=None: config.get(key, default))
         except LLMRefineError:
-            findings.append(finding('config.llm_refine', 'error', 'LLM refinement needs an endpoint URL and model.',
+            findings.append(finding('config.llm_refine', 'error', f'{feature} needs an endpoint URL and model.',
                 'Run hyprwhspr config llm, or set llm_refine_endpoint_url and llm_refine_model.'))
         else:
             if target['provider']['api_key_required'] and not get_credential(target['credential']):
                 findings.append(finding('config.llm_refine_key', 'warning',
-                    'LLM refinement is enabled but no API key is stored; dictations paste unrefined.',
+                    f'{feature} is configured but no API key is stored; dictations paste unchanged.',
                     'Run hyprwhspr config llm to store the key.'))
     if config.get('realtime_live_typing'):
         conflict = live_typing_conflict(lambda key, default=None: config.get(key, default))

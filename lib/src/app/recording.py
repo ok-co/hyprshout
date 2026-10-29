@@ -86,12 +86,14 @@ class RecordingMixin:
             if not self._start_settled.wait(timeout=5.0):
                 log("[WARN] Recording start still settling; stopping capture anyway")
 
-    def _start_recording(self, language_override=None):
+    def _start_recording(self, language_override=None, translate=False):
         """Start voice recording
         
         Args:
             language_override: Optional language code to use for this recording session
                               (overrides the default language from config)
+            translate: Translate this session's dictation with the LLM
+                       (llm_translate_language) before it is pasted
         """
         # Gate checks happen under the same lock that sets the flag, so a
         # concurrent toggle never sees is_recording=True for a start that
@@ -130,6 +132,7 @@ class RecordingMixin:
                 self._stall_notified = False  # an earlier stall's notice covers only its own restart
                 # Store language override for this recording session
                 self._current_language_override = language_override
+                self._current_translate = translate
                 # Push-to-talk hold is measured from this accepted press
                 self._ptt_press_time = time.monotonic()
                 self._ptt_locked = False
@@ -421,6 +424,8 @@ class RecordingMixin:
 
     def _live_typing_eligible(self) -> bool:
         """Opted in, allowed by config (see live_typing_conflict), and no capture client waiting."""
+        if self._current_translate:
+            return False  # the translation needs the whole dictation
         if not self.config.get_setting('realtime_live_typing', False):
             return False
         if self._recording_control_server.has_capture_subscriber():
@@ -513,6 +518,7 @@ class RecordingMixin:
             session = self._recording_session
             self.is_recording = False
             self._current_language_override = None  # Clear language override on error
+            self._current_translate = False
             self._ptt_reset()
 
         log("[MUTE] Recording cancelled - microphone returned silence for 1 second")
@@ -551,6 +557,7 @@ class RecordingMixin:
             session = self._recording_session
             self.is_recording = False
             self._current_language_override = None
+            self._current_translate = False
             self._ptt_reset()
 
         log("[RECOVERY] Recording discarded - audio server restarted")
@@ -573,6 +580,7 @@ class RecordingMixin:
             session = self._recording_session
             self.is_recording = False
             self._current_language_override = None
+            self._current_translate = False
             self._ptt_reset()
 
         log("Recording cancelled (discarded)")
@@ -681,6 +689,7 @@ class RecordingMixin:
                 
             # Clear language override after transcription completes
             self._current_language_override = None
+            self._current_translate = False
                 
         except Exception as e:
             log(f"[ERROR] Error stopping recording: {e}")
@@ -689,6 +698,7 @@ class RecordingMixin:
             try:
                 self.is_recording = False
                 self._current_language_override = None  # Clear language override on cancel
+                self._current_translate = False
                 self._show_result_and_hide(False)
                 self._stop_audio_level_monitoring()
                 self._write_recording_status(False)
@@ -740,7 +750,7 @@ class RecordingMixin:
                     return
 
                 # Inject text
-                outcome = self._inject_text(text)
+                outcome = self._inject_text(text, translate=self._current_translate)
                 success = outcome != InjectionOutcome.FAILED
             else:
                 log("[WARN] No transcription generated")
@@ -771,7 +781,7 @@ class RecordingMixin:
         if self._recording_control_server.has_capture_subscriber():
             self._notify_capture("", final=True)
 
-    def _inject_text(self, text):
+    def _inject_text(self, text, translate=False):
         """Inject transcribed text into active application"""
 
         # Capture mode: route text to client instead of injecting into active app
@@ -780,7 +790,7 @@ class RecordingMixin:
             return InjectionOutcome.INJECTED
 
         try:
-            outcome = self.text_injector.inject_text(text)
+            outcome = self.text_injector.inject_text(text, translate=translate)
             if outcome == InjectionOutcome.FAILED:
                 log(f"[ERROR] Text injection failed ({len(text)} chars)")
                 notify = True

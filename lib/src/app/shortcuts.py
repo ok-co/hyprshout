@@ -139,6 +139,36 @@ class ShortcutsMixin:
             log(f"[ERROR] Failed to initialize secondary shortcuts: {e}")
             self.secondary_shortcuts = None
 
+        # Set up translate shortcut if configured: records like the primary
+        # shortcut, and the LLM translates the dictation before it is pasted
+        try:
+            translate_shortcut_key = self.config.get_setting("translate_shortcut", None)
+            if translate_shortcut_key:
+                if recording_mode == 'long_form':
+                    on_press, on_release = self._on_translate_shortcut_long_form, None
+                elif recording_mode in ('push_to_talk', 'auto'):
+                    on_press, on_release = self._on_translate_shortcut_triggered, self._on_shortcut_released
+                else:
+                    on_press, on_release = self._on_translate_shortcut_triggered, None
+                self._translate_shortcuts = GlobalShortcuts(
+                    translate_shortcut_key,
+                    on_press,
+                    on_release,
+                    device_path=selected_device_path,
+                    device_name=selected_device_name,
+                    grab_keys=grab_keys,
+                    keyboard_device_names=keyboard_device_names,
+                    keyboard_hotplug=keyboard_hotplug,
+                )
+                if self._translate_shortcuts.start():
+                    log(f"[INFO] Translate shortcut registered: {translate_shortcut_key}")
+                else:
+                    log(f"[WARNING] Failed to start translate shortcut: {translate_shortcut_key}")
+                    self._translate_shortcuts = None
+        except Exception as e:
+            log(f"[ERROR] Failed to initialize translate shortcut: {e}")
+            self._translate_shortcuts = None
+
         # Set up cancel shortcut if configured
         try:
             cancel_shortcut_key = self.config.get_setting("cancel_shortcut", None)
@@ -192,8 +222,11 @@ class ShortcutsMixin:
         """Handle global shortcut trigger (key press)"""
         self._handle_shortcut_triggered()
 
-    def _handle_shortcut_triggered(self, language_override=None):
-        """Shared logic for handling shortcut trigger with optional language override"""
+    def _handle_shortcut_triggered(self, language_override=None, translate=False):
+        """Shared logic for handling shortcut trigger with optional language override
+
+        translate applies to a recording this press starts.
+        """
         recording_mode = self.config.get_setting("recording_mode", "toggle")
 
         if recording_mode in ('toggle', 'continuous'):
@@ -203,7 +236,7 @@ class ShortcutsMixin:
                     self._continuous_stop_and_wait()
                 self._stop_recording()
             else:
-                self._start_recording(language_override=language_override)
+                self._start_recording(language_override=language_override, translate=translate)
                 if recording_mode == 'continuous':
                     self._continuous_start_silence_monitor()
                 elif recording_mode == 'toggle':
@@ -212,7 +245,7 @@ class ShortcutsMixin:
             # A latched session ends on the next press; an unlocked live recording
             # (e.g. started from the tray) just restarts the hold clock.
             if not self.is_recording:
-                self._start_recording(language_override=language_override)
+                self._start_recording(language_override=language_override, translate=translate)
             elif self._ptt_locked:
                 log("[CONTROL] Locked push-to-talk session ended by key press")
                 self._stop_recording()
@@ -243,13 +276,13 @@ class ShortcutsMixin:
             # NOTE: auto-stop-on-silence is armed on RELEASE (tap-confirm path), not here, so a
             # >=400ms hold stays pure push-to-talk and is never cut off mid-hold.
             if should_start:
-                self._start_recording(language_override=language_override)
+                self._start_recording(language_override=language_override, translate=translate)
         else:
             # Invalid mode, default to toggle behavior
             if self.is_recording:
                 self._stop_recording()
             else:
-                self._start_recording(language_override=language_override)
+                self._start_recording(language_override=language_override, translate=translate)
 
     def _on_shortcut_released(self):
         """Handle global shortcut release (key release)
@@ -301,6 +334,14 @@ class ShortcutsMixin:
 
     # Secondary release is identical to primary release - reuse the same handler
     _on_secondary_shortcut_released = _on_shortcut_released
+
+    def _on_translate_shortcut_triggered(self):
+        """Handle translate shortcut trigger (key press): record, then translate"""
+        self._handle_shortcut_triggered(translate=True)
+
+    def _on_translate_shortcut_long_form(self):
+        """Long-form translate key: a session it starts is translated on submit"""
+        self._longform.primary_shortcut(translate=True)
 
     def _ptt_reset(self):
         """Drop push-to-talk hold state. Caller holds _recording_lock."""
@@ -362,6 +403,7 @@ class ShortcutsMixin:
             handlers = (
                 self.global_shortcuts,
                 self.secondary_shortcuts,
+                self._translate_shortcuts,
                 self._cancel_shortcuts,
                 self._longform_submit_shortcuts,
             )

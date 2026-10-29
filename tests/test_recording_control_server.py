@@ -57,6 +57,9 @@ class RecordingControlServerTests(unittest.TestCase):
             ("start", "pt-BR"),
         )
         self.assertIsNone(RecordingControlServer.parse_commands("\ninvalid\nstartling\n"))
+        self.assertEqual(RecordingControlServer.parse_commands("translate\n"), ("translate", None))
+        self.assertEqual(RecordingControlServer.parse_commands("TRANSLATE:it\n"), ("translate", "it"))
+        self.assertIsNone(RecordingControlServer.parse_commands("translated:it\n"))
         self.assertEqual(
             RecordingControlServer.parse_commands("start\nrelease\n"),
             ("release", None),

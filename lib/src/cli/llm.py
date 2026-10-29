@@ -29,10 +29,10 @@ except ImportError:
 
 try:
     from ..llm_refiner import (DEFAULT_PROMPT, DEFAULT_PROVIDER, LLM_PROVIDERS, LLMRefineError,
-                               refine_text, resolve_target)
+                               refine_text, resolve_target, translate_language)
 except ImportError:
     from llm_refiner import (DEFAULT_PROMPT, DEFAULT_PROVIDER, LLM_PROVIDERS, LLMRefineError,
-                             refine_text, resolve_target)
+                             refine_text, resolve_target, translate_language)
 
 try:
     from ..output_control import log_info, log_success, log_warning, log_error
@@ -52,7 +52,7 @@ SAMPLE_TEXT = ("so um I wanted to ask if we can move the meeting to Tuesday, no 
 RESTART_HINT = "  systemctl --user restart hyprwhspr"
 
 
-def llm_command(action: Optional[str] = None, text: Optional[str] = None):
+def llm_command(action: Optional[str] = None, text: Optional[str] = None, translate: bool = False):
     """Handle config llm subcommands"""
     action = action or 'setup'
     if action == 'setup':
@@ -60,7 +60,7 @@ def llm_command(action: Optional[str] = None, text: Optional[str] = None):
     elif action == 'status':
         show_llm_status()
     elif action == 'test':
-        if not test_llm(text):
+        if not test_llm(text, translate=translate):
             sys.exit(1)
     elif action == 'prompt':
         edit_llm_prompt()
@@ -212,9 +212,12 @@ def show_llm_status():
     if extra.strip():
         print(f"Extra:         {extra.strip()}")
     print(f"Timeout:       {config.get_setting('llm_refine_timeout', 15)}s")
+    translate_key = config.get_setting('translate_shortcut', None)
+    print(f"Translate to:  {translate_language(config.get_setting)} "
+          f"(translate_shortcut: {translate_key or 'not set'})")
 
 
-def test_llm(text: Optional[str] = None, config=None) -> bool:
+def test_llm(text: Optional[str] = None, config=None, translate: bool = False) -> bool:
     """Run text (argument, piped stdin, or a sample) through the configured LLM"""
     config = config or ConfigManager(verbose=False)
     if text is None and not sys.stdin.isatty():
@@ -223,13 +226,13 @@ def test_llm(text: Optional[str] = None, config=None) -> bool:
     print(f"\nInput:  {text}")
     started = time.monotonic()
     try:
-        result = refine_text(text, config.get_setting)
+        result = refine_text(text, config.get_setting, translate=translate)
     except LLMRefineError as e:
-        log_error(f"LLM refinement failed: {e}")
+        log_error(f"LLM {'translation' if translate else 'refinement'} failed: {e}")
         return False
     print(f"Output: {result}")
     log_info(f"Took {time.monotonic() - started:.1f}s")
-    if config.get_setting('llm_refine_enabled', False) is not True:
+    if not translate and config.get_setting('llm_refine_enabled', False) is not True:
         log_info("Refinement is disabled; run 'hyprwhspr config llm' to enable it")
     return True
 

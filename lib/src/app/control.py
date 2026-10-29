@@ -74,15 +74,21 @@ class ControlMixin:
                 self._file_transcription_active = False
 
     def _handle_control_command(self, action, language=None):
-        """Apply recording policy for a command received by the control server."""
+        """Apply recording policy for a command received by the control server.
+
+        "translate" is a start whose dictation the LLM translates.
+        """
         recording_mode = self.config.get_setting("recording_mode", "toggle")
-        if action == "start":
+        if action in ("start", "translate"):
+            translate = action == "translate"
             lang_info = f" (language: {language})" if language else ""
+            if translate:
+                lang_info += " (translate)"
             if recording_mode == "long_form":
-                self._longform.request_start(language_override=language)
+                self._longform.request_start(language_override=language, translate=translate)
             elif not self.is_recording:
                 log(f"[CONTROL] Recording start requested (immediate){lang_info}")
-                self._start_recording(language_override=language)
+                self._start_recording(language_override=language, translate=translate)
                 if recording_mode == "continuous":
                     self._continuous_start_silence_monitor()
                 elif recording_mode in ("toggle", "auto"):

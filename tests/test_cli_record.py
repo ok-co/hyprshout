@@ -13,7 +13,7 @@ from cli import record
 
 
 class RecordCommandTests(unittest.TestCase):
-    def run_action(self, action, status):
+    def run_action(self, action, status, **kwargs):
         with tempfile.TemporaryDirectory() as temp:
             control = Path(temp) / "recording_control"
             control.write_text("")
@@ -26,7 +26,7 @@ class RecordCommandTests(unittest.TestCase):
                 mock.patch.object(record, "log_success") as success,
                 mock.patch.object(record, "log_info") as info,
             ):
-                record.record_command(action)
+                record.record_command(action, **kwargs)
             return control.read_text(), success, info
 
     def test_stale_status_still_sends_command(self):
@@ -54,6 +54,18 @@ class RecordCommandTests(unittest.TestCase):
                 success.assert_called_once()
                 info.assert_not_called()
 
+
+    def test_translate_sends_a_translate_start(self):
+        for action, kwargs, expected in (
+            ("start", {"translate": True}, "translate\n"),
+            ("toggle", {"translate": True, "language": "it"}, "translate:it\n"),
+            ("start", {"language": "it"}, "start:it\n"),
+        ):
+            with self.subTest(action=action, kwargs=kwargs):
+                sent, success, _ = self.run_action(action, "false", **kwargs)
+                self.assertEqual(sent, expected)
+                if kwargs.get("translate"):
+                    self.assertIn("translate", success.call_args[0][0])
 
 if __name__ == "__main__":
     unittest.main()
