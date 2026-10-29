@@ -115,6 +115,24 @@ def build_default_config():
         'llm_refine_extra_instructions': '',   # Appended to whichever prompt is active
         'llm_refine_temperature': None,        # Null = provider default
         'llm_refine_timeout': 15,              # Seconds; the original text is pasted on timeout
+        # Voice control (app/voice.py): the start word opens a quiet command
+        # session, the end word closes it; a decision model on OpenRouter's
+        # Decisions API picks the action. Words are openWakeWord model names
+        # or paths to custom .onnx models. The end word also stops dictations.
+        'voice_control_enabled': False,
+        'voice_control_start_word': 'hey_jarvis',
+        'voice_control_end_word': 'hey_mycroft',
+        'voice_control_threshold': 0.5,          # Wake word score (0-1) that counts as heard
+        'voice_control_end_trim_seconds': 1.0,   # Audio cut from the end so the end word isn't transcribed
+        'voice_control_max_command_seconds': 15, # A command longer than this is dropped
+        'voice_control_cues': True,              # Quiet pings when a command opens and closes
+        'voice_control_decision_model': 'typesafe/jev-1.14',
+        'voice_control_decision_endpoint': 'https://openrouter.ai/api/alpha/decisions',
+        'voice_control_decision_timeout': 10,
+        'voice_control_min_confidence': 0.5,     # Below this the decision counts as "didn't understand"
+        'voice_control_languages': ['en', 'de', 'fr', 'es', 'it', 'pt', 'nl', 'pl'],  # Languages commands can name
+        'voice_control_translation_language': 'en',  # Target when a translate command names none
+        'voice_control_scratchpad_file': None,   # Null = ~/.local/share/hyprwhspr/scratchpad.md
         'clipboard_behavior': False,  # Boolean: true = clear clipboard after delay, false = keep (current behavior)
         'clipboard_clear_delay': 5.0,  # Float: seconds to wait before clearing clipboard (only used if clipboard_behavior is true)
         'clipboard_settle_delay': 0.15,  # Seconds between clipboard copy and paste shortcut

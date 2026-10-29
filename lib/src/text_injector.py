@@ -15,7 +15,7 @@ import ast
 import math
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 try:
     from .service_log import log
@@ -1501,14 +1501,25 @@ except Exception:
             if self._stream is session:
                 self._stream = None
 
-    def inject_text(self, text: str) -> InjectionOutcome:
-        """Prepare, retain and deliver one dictation at a time."""
+    def inject_text(self, text: str, refine: Optional[Callable[[str], str]] = None) -> InjectionOutcome:
+        """Prepare, retain and deliver one dictation at a time.
+
+        refine replaces the configured LLM pass for this dictation (voice
+        control turns it off or translates instead).
+        """
         if self.stream_busy():
             return InjectionOutcome.FAILED
         with self._delivery_lock:
             if self.stream_busy():
                 return InjectionOutcome.FAILED
-            return self._prepare_and_inject_text(text)
+            return self._prepare_and_inject_text(text, refine)
+
+    def prepare_text(self, text: str, refine: Optional[Callable[[str], str]] = None) -> str:
+        """Preprocess and refine a dictation without hooks or delivery; '' when nothing is left."""
+        processed = self._preprocess_text(text or '').strip()
+        if not processed:
+            return ''
+        return (refine or self._refine_with_llm)(processed).strip()
 
     def inject_stream_chunk(self, session: _StreamSession, text: str, final: bool = False) -> InjectionOutcome:
         """Deliver one chunk of a dictation typed while recording.
@@ -1699,7 +1710,7 @@ except Exception:
         finally:
             self._delivery_lock.release()
 
-    def _prepare_and_inject_text(self, text: str) -> InjectionOutcome:
+    def _prepare_and_inject_text(self, text: str, refine=None) -> InjectionOutcome:
         """
         Inject text into the currently focused application
 
@@ -1722,7 +1733,7 @@ except Exception:
         if not processed_text.strip():
             log("No text to inject (empty after preprocessing)")
             return InjectionOutcome.INJECTED
-        processed_text = self._refine_with_llm(processed_text)
+        processed_text = (refine or self._refine_with_llm)(processed_text)
         hook_result = self._run_post_transcription_hook(processed_text)
         if hook_result.outcome == _PostTranscriptionHookOutcome.CONSUME:
             return InjectionOutcome.CONSUMED

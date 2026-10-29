@@ -11,6 +11,7 @@ from hallucination import is_hallucination
 from live_typing import LiveTypingSession
 from service_log import log
 from backend_utils import normalize_backend
+from voice_command import strip_wake_phrase
 
 try:
     import numpy as np
@@ -86,12 +87,14 @@ class RecordingMixin:
             if not self._start_settled.wait(timeout=5.0):
                 log("[WARN] Recording start still settling; stopping capture anyway")
 
-    def _start_recording(self, language_override=None):
+    def _start_recording(self, language_override=None, voice_plan=None):
         """Start voice recording
         
         Args:
             language_override: Optional language code to use for this recording session
                               (overrides the default language from config)
+            voice_plan: DictationPlan of a voice-started dictation; None for a
+                        manual start, which also cancels a pending voice command
         """
         # Gate checks happen under the same lock that sets the flag, so a
         # concurrent toggle never sees is_recording=True for a start that
@@ -130,6 +133,8 @@ class RecordingMixin:
                 self._stall_notified = False  # an earlier stall's notice covers only its own restart
                 # Store language override for this recording session
                 self._current_language_override = language_override
+                # Delivery plan of a voice-started dictation, taken at stop
+                self._voice_plan = voice_plan
                 # Push-to-talk hold is measured from this accepted press
                 self._ptt_press_time = time.monotonic()
                 self._ptt_locked = False
@@ -139,6 +144,8 @@ class RecordingMixin:
         # the capture slot occupied (no recording will ever finish for it).
         if blocked is not None:
             self._release_blocked_capture()
+        elif voice_plan is None:
+            self._voice_preempt()
 
         # Model is still loading in background
         if blocked in ('initializing', 'init-failed', 'realtime-reconnect'):
@@ -425,6 +432,8 @@ class RecordingMixin:
             return False
         if self._recording_control_server.has_capture_subscriber():
             return False
+        if getattr(self, '_voice_plan', None) is not None:
+            return False  # voice dictations are rewritten or filed whole, after the end word
         return self.whisper_manager.realtime_live_typing_supported()
 
     def _open_live_typing(self):
@@ -568,12 +577,16 @@ class RecordingMixin:
     def _cancel_recording(self):
         """Cancel recording and discard audio without transcribing or injecting text"""
         with self._recording_lock:
-            if not self.is_recording:
-                return
-            session = self._recording_session
-            self.is_recording = False
-            self._current_language_override = None
-            self._ptt_reset()
+            recording = self.is_recording
+            if recording:
+                session = self._recording_session
+                self.is_recording = False
+                self._current_language_override = None
+                self._ptt_reset()
+        if not recording:
+            # Nothing recording: cancel drops a pending voice command instead
+            self._voice_cancel_command("cancel requested")
+            return
 
         log("Recording cancelled (discarded)")
 
@@ -611,8 +624,12 @@ class RecordingMixin:
         except Exception as e:
             log(f"[WARN] Failed to save debug recording: {e}")
 
-    def _stop_recording(self, expected_session=None):
-        """Stop voice recording and process audio"""
+    def _stop_recording(self, expected_session=None, trim_tail_seconds=0.0):
+        """Stop voice recording and process audio
+
+        trim_tail_seconds cuts the end of the audio: the end word that stopped
+        the recording, which is also stripped from the transcript.
+        """
         with self._recording_lock:
             if (not self.is_recording
                     or (expected_session is not None and self._recording_session is not expected_session)):
@@ -620,7 +637,10 @@ class RecordingMixin:
             self.is_recording = False
             self._recording_finalizing.set()
             session = self._recording_session
+            voice_plan = getattr(self, '_voice_plan', None)
+            self._voice_plan = None
             self._ptt_reset()
+        end_phrase = getattr(self, '_voice_end_phrase', None) if trim_tail_seconds > 0 else None
 
         try:
             log("Recording stopped")
@@ -650,6 +670,7 @@ class RecordingMixin:
             self._wait_for_start_settled()
             audio_data = self.audio_capture.stop_recording()
             self._save_debug_recording(audio_data)
+            audio_data = self._trim_audio_tail(audio_data, trim_tail_seconds)
 
             # Check for zero-volume or broken stream
             if audio_data is None:
@@ -677,7 +698,10 @@ class RecordingMixin:
             else:
                 # Valid audio data - process it
                 self.audio_manager.play_stop_sound()
-                self._process_audio(audio_data)
+                if voice_plan is None and end_phrase is None:
+                    self._process_audio(audio_data)
+                else:
+                    self._process_audio(audio_data, voice_plan=voice_plan, end_phrase=end_phrase)
                 
             # Clear language override after transcription completes
             self._current_language_override = None
@@ -703,8 +727,21 @@ class RecordingMixin:
             self._cancel_live_typing()
             self._recording_finalizing.clear()
 
-    def _process_audio(self, audio_data):
-        """Process captured audio through Whisper"""
+    def _trim_audio_tail(self, audio_data, seconds):
+        """Cut the last seconds of a recording, keeping it whole if little would be left."""
+        if audio_data is None or not seconds or seconds <= 0:
+            return audio_data
+        cut = int(seconds * self.audio_capture.sample_rate)
+        if len(audio_data) - cut < int(0.3 * self.audio_capture.sample_rate):
+            return audio_data  # nothing was said; the transcript strip handles the word
+        return audio_data[:-cut]
+
+    def _process_audio(self, audio_data, voice_plan=None, end_phrase=None):
+        """Process captured audio through Whisper
+
+        voice_plan: delivery of a voice-started dictation (voice_command.DictationPlan)
+        end_phrase: the end word that stopped the recording, stripped from the transcript
+        """
         with self._recording_lock:
             if self.is_processing:
                 return
@@ -718,6 +755,9 @@ class RecordingMixin:
                 sample_rate=self.audio_capture.sample_rate,
                 language_override=self._current_language_override,
             )
+
+            if end_phrase and transcription:
+                transcription = strip_wake_phrase(transcription.strip(), end_phrase=end_phrase)
 
             # Words already typed live: type the rest, no hallucination re-check
             live_outcome = self._finish_live_typing(transcription)
@@ -740,7 +780,10 @@ class RecordingMixin:
                     return
 
                 # Inject text
-                outcome = self._inject_text(text)
+                if voice_plan is None:
+                    outcome = self._inject_text(text)
+                else:
+                    outcome = self._inject_text(text, voice_plan=voice_plan)
                 success = outcome != InjectionOutcome.FAILED
             else:
                 log("[WARN] No transcription generated")
@@ -771,16 +814,27 @@ class RecordingMixin:
         if self._recording_control_server.has_capture_subscriber():
             self._notify_capture("", final=True)
 
-    def _inject_text(self, text):
-        """Inject transcribed text into active application"""
+    def _inject_text(self, text, voice_plan=None):
+        """Inject transcribed text into active application
+
+        voice_plan routes a voice-started dictation: to the scratchpad, or
+        pasted with its own refine step (raw, translated).
+        """
 
         # Capture mode: route text to client instead of injecting into active app
         if self._recording_control_server.has_capture_subscriber():
             self._notify_capture(text, final=True)
             return InjectionOutcome.INJECTED
 
+        if voice_plan is not None and voice_plan.output == 'scratchpad':
+            return self._save_to_scratchpad(text, voice_plan)
+
         try:
-            outcome = self.text_injector.inject_text(text)
+            refine = self._voice_refine(voice_plan)
+            if refine is None:
+                outcome = self.text_injector.inject_text(text)
+            else:
+                outcome = self.text_injector.inject_text(text, refine=refine)
             if outcome == InjectionOutcome.FAILED:
                 log(f"[ERROR] Text injection failed ({len(text)} chars)")
                 notify = True

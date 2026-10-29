@@ -120,7 +120,7 @@ class ControlMixin:
                     self._continuous_cancelled = True
                     self._continuous_stop_silence_monitor()
                 self._cancel_recording()
-            else:
+            elif not self._voice_cancel_command("cancel requested"):
                 log("[CONTROL] Not currently recording, ignoring cancel request")
         elif action == "submit":
             if recording_mode == "long_form":
