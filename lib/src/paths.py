@@ -38,6 +38,8 @@ VISUALIZER_STATE_FILE = RUNTIME_DIR / 'visualizer_state'  # recording|paused|pro
 TRANSCRIPT_PREVIEW_FILE = RUNTIME_DIR / 'transcript_preview'
 MIC_OSD_LEVEL_FEED_FILE = RUNTIME_DIR / 'mic_osd_level_feed'
 SCRATCHPAD_FILE = RUNTIME_DIR / 'scratchpad.md'  # Scratchpad draft (scratchpad.py)
+SCRATCHPAD_PREVIEW_FILE = RUNTIME_DIR / 'scratchpad_preview.json'  # Preview panel state
+SCRATCHPAD_PANEL_LOG_FILE = RUNTIME_DIR / 'scratchpad_panel.log'  # Preview panel stderr
 
 # Secure credential storage
 CREDENTIALS_DIR = DATA_DIR

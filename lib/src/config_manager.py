@@ -122,6 +122,8 @@ def build_default_config():
         'scratchpad_model': None,              # Scratchpad edits; null = llm_refine_model
         'scratchpad_timeout': 30,              # Seconds per scratchpad edit; the draft is kept on timeout
         'scratchpad_clear_on_paste': True,     # Empty the draft once it is pasted (scratchpad undo restores it)
+        'scratchpad_preview': True,            # Show the draft in an overlay panel while drafting (layer-shell compositors)
+        'scratchpad_preview_seconds': 8,       # How long the panel stays after a change; 0 = until paste or clear
         'clipboard_behavior': False,  # Boolean: true = clear clipboard after delay, false = keep (current behavior)
         'clipboard_clear_delay': 5.0,  # Float: seconds to wait before clearing clipboard (only used if clipboard_behavior is true)
         'clipboard_settle_delay': 0.15,  # Seconds between clipboard copy and paste shortcut

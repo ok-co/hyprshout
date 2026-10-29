@@ -304,6 +304,18 @@
       "default": true,
       "description": "Empty the scratchpad draft once it is pasted. 'hyprwhspr scratchpad undo' restores it."
     },
+    "scratchpad_preview": {
+      "type": "boolean",
+      "default": true,
+      "description": "Show the scratchpad draft in an overlay panel while you dictate into it, with the last change highlighted. Needs GTK4 and a layer-shell compositor (Hyprland, Sway, niri, ...); elsewhere, or when false, each change is shown in a desktop notification."
+    },
+    "scratchpad_preview_seconds": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 3600,
+      "default": 8,
+      "description": "Seconds the scratchpad panel stays visible after the draft changes. 0 keeps it on screen until the draft is pasted or cleared."
+    },
     "clipboard_behavior": {
       "type": "boolean",
       "default": false,

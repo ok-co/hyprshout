@@ -1,6 +1,7 @@
 """Scratchpad: dictations that edit a draft, pasted only when it is ready."""
 
 import html
+import threading
 import time
 
 import llm_refiner
@@ -10,10 +11,17 @@ from text_injector import InjectionOutcome, preprocess_text
 
 # Tail of the draft shown in the notification after each change.
 _PREVIEW_CHARS = 280
+# How long the panel shows a paste, copy or clear before it hides.
+_BRIEF_SECONDS = 1.5
+# Visualizer states mirrored on the panel while a scratchpad recording runs.
+_PANEL_FOLLOWS = {'recording': 'listening', 'paused': 'paused', 'processing': 'transcribing'}
+
+_KEEP = object()  # previous=_KEEP: keep the panel's current highlight
+_panel_init_lock = threading.Lock()
 
 
 class ScratchpadMixin:
-    """Scratchpad route, its socket requests and the paste shortcut."""
+    """Scratchpad route, its socket requests, the paste shortcut and the preview."""
 
     def _scratchpad_apply(self, text):
         """Apply one dictation to the draft with the LLM; never pastes.
@@ -27,6 +35,8 @@ class ScratchpadMixin:
             log("[SCRATCHPAD] Nothing to add (empty after preprocessing)")
             return InjectionOutcome.CONSUMED
         get_setting = self.config.get_setting
+        before = self._scratchpad.read()
+        self._publish_scratchpad('updating', before)
         started = time.monotonic()
         try:
             draft = self._scratchpad.apply(
@@ -40,10 +50,13 @@ class ScratchpadMixin:
         else:
             log(f"[SCRATCHPAD] Draft updated in {time.monotonic() - started:.1f}s "
                 f"({len(dictation)} chars dictated, draft {len(draft)} chars)")
-            self._show_scratchpad(draft)
+            # Continuous mode keeps recording into the draft after each segment
+            still_recording = self.is_recording and self._scratchpad_recording()
+            self._show_scratchpad(draft, previous=before, state='listening' if still_recording else 'updated')
             return InjectionOutcome.CONSUMED
         log(f"[SCRATCHPAD] Edit failed, draft unchanged: {reason}")
         self.text_injector.retain_text(dictation)
+        self._publish_scratchpad('error', message=reason)
         self._notify_user(
             "hyprwhspr scratchpad",
             f"Edit failed ({reason}); the draft is unchanged. "
@@ -59,13 +72,15 @@ class ScratchpadMixin:
         if verb == 'scratchpad_clear':
             if not pad.clear():
                 return True, 'The draft is already empty'
-            self._show_scratchpad('')
+            if not self._publish_scratchpad('cleared', '', previous=None):
+                self._show_scratchpad('')
             return True, 'Draft cleared (scratchpad undo restores it)'
         if verb == 'scratchpad_undo':
+            before = pad.read()
             restored = pad.undo()
             if restored is None:
                 return False, 'Nothing to undo'
-            self._show_scratchpad(restored)
+            self._show_scratchpad(restored, previous=before)
             return True, 'Undone'
         if verb in ('scratchpad_copy', 'scratchpad_paste'):
             return self._scratchpad_deliver(verb[len('scratchpad_'):])
@@ -84,6 +99,7 @@ class ScratchpadMixin:
                 and self._scratchpad.clear(expected=draft)):
             self._close_scratchpad_notification()
             message += '; draft cleared (scratchpad undo restores it)'
+        self._publish_scratchpad('pasted' if action == 'paste' else 'copied', draft, previous=None)
         return True, message
 
     def _on_scratchpad_paste_shortcut(self):
@@ -93,7 +109,15 @@ class ScratchpadMixin:
             log(f"[SCRATCHPAD] Paste not done: {message}")
             self._notify_user("hyprwhspr scratchpad", message)
 
-    def _show_scratchpad(self, draft):
+    # ------------------------ Preview ------------------------
+
+    def _show_scratchpad(self, draft, previous=None, state='updated'):
+        """Show the changed draft: on the panel, else in a notification."""
+        if self._publish_scratchpad(state, draft, previous=previous):
+            return
+        self._notify_scratchpad(draft)
+
+    def _notify_scratchpad(self, draft):
         """Show the draft's end in one notification, replaced on every change."""
         words = len(draft.split())
         if draft:
@@ -122,3 +146,103 @@ class ScratchpadMixin:
             close_notification(nid)
         except Exception:
             pass
+
+    def _scratchpad_panel_runner(self):
+        """The preview panel runner, created on first use; None where it can't run.
+
+        Needs scratchpad_preview on and a layer-shell compositor; elsewhere
+        (GNOME, no GTK4) the scratchpad uses notifications.
+        """
+        panel = getattr(self, '_scratchpad_panel', None)
+        if panel is None:
+            with _panel_init_lock:
+                panel = getattr(self, '_scratchpad_panel', None)
+                if panel is None:
+                    panel = self._create_scratchpad_panel() or False
+                    self._scratchpad_panel = panel
+        if not panel or panel.disabled:
+            return None
+        return panel
+
+    def _create_scratchpad_panel(self):
+        if self.config.get_setting('scratchpad_preview', True) is False:
+            return None
+        try:
+            from mic_osd import MicOSDRunner, ScratchpadPanelRunner
+            # A running overlay already proved layer shell works here
+            if not (isinstance(getattr(self, '_mic_osd_runner', None), MicOSDRunner)
+                    or ScratchpadPanelRunner.is_supported()):
+                log("[SCRATCHPAD] No layer-shell overlay; previews use notifications")
+                return None
+            return ScratchpadPanelRunner()
+        except Exception as e:
+            log(f"[SCRATCHPAD] Preview panel unavailable: {e}")
+            return None
+
+    def _publish_scratchpad(self, state, draft=None, previous=_KEEP, message=''):
+        """Show state on the panel; False when there is no panel."""
+        panel = self._scratchpad_panel_runner()
+        if panel is None:
+            return False
+        if draft is None:
+            draft = self._scratchpad.read()
+        if state in ('updated', 'error'):
+            seconds = self.config.get_setting('scratchpad_preview_seconds', 8)
+            hold = float(seconds) if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) \
+                and seconds > 0 else None
+        elif state in ('pasted', 'copied', 'cleared'):
+            hold = _BRIEF_SECONDS
+        else:
+            hold = None
+        kwargs = {} if previous is _KEEP else {'previous': previous}
+        try:
+            return panel.publish(state, draft, message=message, hint=self._scratchpad_hint(), hold=hold, **kwargs)
+        except Exception as e:
+            log(f"[SCRATCHPAD] Preview update failed: {e}")
+            return False
+
+    def _scratchpad_hint(self):
+        key = None
+        if not self.config.get_setting('external_bindings', False):
+            key = self.config.get_setting('scratchpad_paste_shortcut', None)
+        paste = f"{key} pastes" if key else "hyprwhspr scratchpad paste"
+        return f"{paste} · hyprwhspr scratchpad undo"
+
+    def _scratchpad_recording(self):
+        """The current recording session goes into the scratchpad."""
+        if self.config.get_setting('recording_mode', 'toggle') == 'long_form':
+            return getattr(getattr(self, '_longform', None), 'route', None) == 'scratchpad'
+        return getattr(self, '_current_route', 'paste') == 'scratchpad'
+
+    def _scratchpad_preview_follow(self, visualizer_state):
+        """Mirror a scratchpad recording's progress on the panel."""
+        try:
+            status = _PANEL_FOLLOWS.get(visualizer_state)
+            if status and self._scratchpad_recording():
+                self._publish_scratchpad(status)
+        except Exception:
+            pass  # The preview must never break recording
+
+    def _scratchpad_preview_settle(self):
+        """The recording ended (OSD hidden): close a panel still waiting on it.
+
+        A session that changed the draft (continuous mode) ends showing the
+        result; one that never reached the LLM (cancelled, nothing heard)
+        just hides.
+        """
+        panel = getattr(self, '_scratchpad_panel', None)
+        try:
+            if not panel or not panel.is_active():
+                return
+            last = panel.last
+            if last.get('previous') is not None:
+                self._publish_scratchpad('updated', last['draft'])
+            else:
+                panel.publish('hidden', last['draft'])
+        except Exception:
+            pass
+
+    def _stop_scratchpad_preview(self):
+        panel = getattr(self, '_scratchpad_panel', None)
+        if panel:
+            panel.stop()
