@@ -4,8 +4,9 @@ The start word opens a quiet command session: the wake word stream itself
 keeps the audio (no recorder, OSD, ducking or paste) until the end word. The
 command is transcribed with the loaded backend and a decision model picks one
 action (voice_command.ACTIONS). Dictation actions start a normal recording on
-the plan's route (paste, translate, scratchpad), which the end word stops like
-any other recording; scratchpad and last-dictation actions run at once.
+the plan's route (paste, translate, scratchpad, assistant), which the end word
+stops like any other recording; scratchpad, last-dictation and 'ask' actions
+run at once.
 
 Manual control always wins: a hotkey or CLI start cancels a pending command,
 and the cancel shortcut or command cancels it too.
@@ -103,8 +104,9 @@ class VoiceControlMixin:
             self._voice_state = 'command'
             self._voice_generation += 1
             self._voice_listener.begin_capture()
-        # The command must not be transcribed over the draft being read aloud
+        # The command must not be transcribed over the draft or a reply being read aloud
         self._stop_scratchpad_speech()
+        self._stop_assistant_speech()
         log("[VOICE] Listening for a command")
         self._voice_cue('start')
 
@@ -158,6 +160,10 @@ class VoiceControlMixin:
         with self._voice_lock:
             return self._voice_state == 'deciding' and self._voice_generation == generation
 
+    def _voice_command_acting(self, generation):
+        with self._voice_lock:
+            return self._voice_state == 'acting' and (generation is None or self._voice_generation == generation)
+
     def _voice_backend_blocked(self):
         with self._recording_lock:
             if self._model_operation_active or self._model_initializing or self._backend_init_failed:
@@ -200,7 +206,7 @@ class VoiceControlMixin:
                 if self._voice_state != 'deciding' or self._voice_generation != generation:
                     return
                 self._voice_state = 'acting'
-            self._voice_execute(decision, text)
+            self._voice_execute(decision, text, generation)
         except Exception as e:
             log(f"[VOICE] Voice command failed: {e}")
         finally:
@@ -208,7 +214,7 @@ class VoiceControlMixin:
                 if self._voice_generation == generation and self._voice_state in ('deciding', 'acting'):
                     self._voice_state = 'idle'
 
-    def _voice_execute(self, decision, text):
+    def _voice_execute(self, decision, text, generation=None):
         log(f"[VOICE] Decision: {decision.action} ({decision.confidence:.2f})"
             + (f", speak {decision.spoken_language}" if decision.spoken_language else "")
             + (f", into {decision.target_language}" if decision.target_language else ""))
@@ -221,6 +227,10 @@ class VoiceControlMixin:
             ok, message = self._handle_recovery(decision.action)
         elif decision.action in SCRATCHPAD_ACTIONS:
             ok, message = self._handle_scratchpad_request(decision.action)
+        elif decision.action == 'ask':
+            # Reports its own failures; a cancel while the LLM runs drops the reply
+            self._assistant_respond(text, still_wanted=lambda: self._voice_command_acting(generation))
+            return
         else:
             if decision.uncertain:
                 self.audio_manager.play_error_sound()

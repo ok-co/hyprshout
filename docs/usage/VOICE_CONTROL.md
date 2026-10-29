@@ -9,11 +9,14 @@ reads the command and picks what happens next:
 - **Scratchpad**: a dictation into the [scratchpad](SCRATCHPAD.md) draft
 - **Draft**: paste, copy, undo, clear or [read aloud](SCRATCHPAD.md#reading-the-draft-aloud) the scratchpad draft
 - **Paste last** / **copy last**: deliver the previous dictation again
+- **Ask**: a question for the [voice assistant](#voice-assistant), answered out loud
 
 A dictation started this way ends when you say the end word. The end word also stops any recording you started
 with a hotkey.
 
 > "Hey Jarvis — translate into German — Hey Mycroft" … *speak your text* … "Hey Mycroft"
+
+> "Hey Jarvis — how many tablespoons are in a cup? — Hey Mycroft" … *"Sixteen. Baking, or just curious?"*
 
 ## How it works
 
@@ -104,6 +107,8 @@ Say what you want in your own words; these are examples.
 | "undo that" / "clear the draft" | the draft's last change undone, or the draft cleared |
 | "read me the draft", "what does the draft say" | the draft read aloud in `scratchpad_voice` |
 | "paste that again" / "copy the last one" | the previous dictation |
+| "what's a good name for a cat", "explain DNS in one sentence" | the question, answered aloud |
+| "Jarvis, I need you", "I have a question" | what you say next, answered aloud |
 | "never mind", "cancel" | nothing |
 
 A command the model isn't sure about shows "Didn't understand" with what it heard.
@@ -115,6 +120,41 @@ language ("translate into French") translates into that one; otherwise `llm_tran
 **Scratchpad** dictations edit the [draft](SCRATCHPAD.md) exactly like the scratchpad shortcut: new content is
 added, an instruction about the draft changes it, and nothing is pasted until you say "send the draft" (or use
 the paste shortcut). Draft actions report failures, such as an empty draft, in a notification.
+
+## Voice assistant
+
+Ask a question instead of giving a command and the assistant answers it out loud. A command that is itself a
+question is answered at once. One that only calls the assistant ("I need you", "are you there") starts a
+recording: say your question, then the end word.
+
+> "Hey Jarvis — I need you — Hey Mycroft" … *ask your question* … "Hey Mycroft"
+
+The question goes to the [LLM refinement](LLM_REFINEMENT.md) provider and model (`assistant_model` overrides
+the model), and the reply is read aloud in `assistant_voice` with the
+[scratchpad's speech model](SCRATCHPAD.md#reading-the-draft-aloud). It needs the same OpenRouter key and an MP3
+player (mpv, ffplay, pw-play or paplay), but not `llm_refine_enabled`.
+
+The built-in personality is Jarvis: helpful first, brief, and dryly funny, like a well-read butler who finds you
+mildly amusing. It keeps the jokes out of serious questions, answers in the language you asked in, and writes
+for the ear (no lists or Markdown). It knows the current date and time, but it can't browse the web, see your
+screen or act on the computer, and says so. Replace the personality with `assistant_prompt`, or keep a longer
+prompt in a file with `assistant_prompt_file`, read on every question:
+
+```jsonc
+{
+    "assistant_prompt_file": "~/.config/hyprwhspr/assistant.md"
+}
+```
+
+Any prompt gets the current time and an instruction never to say your wake words appended, so a reply can't
+trigger voice control through the speakers.
+
+Follow-up questions keep the conversation for `assistant_memory_minutes` after the last reply ("and in
+Fahrenheit?"); after that, or with `0`, every question starts fresh.
+
+The start word, any recording, and the cancel shortcut or `hyprwhspr record cancel` cut a reply off. A question
+cancelled while the LLM is still thinking is never answered. When a reply can't be spoken (no player, a speech
+error, or a [continuous](RECORDING_MODES.md#continuous-mode) recording still listening), it's shown in a notification instead.
 
 ## Manual control wins
 
@@ -141,7 +181,13 @@ stays off for them.
     "voice_control_decision_endpoint": "https://openrouter.ai/api/alpha/decisions",
     "voice_control_decision_timeout": 10,         // seconds
     "voice_control_min_confidence": 0.5,          // below this: "Didn't understand"
-    "voice_control_languages": ["en", "de", "fr", "es", "it", "pt", "nl", "pl"]  // languages a command can name
+    "voice_control_languages": ["en", "de", "fr", "es", "it", "pt", "nl", "pl"],  // languages a command can name
+    "assistant_model": null,                      // null: llm_refine_model
+    "assistant_prompt": null,                     // null: the built-in Jarvis
+    "assistant_prompt_file": null,                // wins over assistant_prompt
+    "assistant_voice": "george",                  // any scratchpad_voice name
+    "assistant_timeout": 30,                      // seconds to wait for a reply
+    "assistant_memory_minutes": 5                 // follow-ups keep the conversation this long; 0 = never
 }
 ```
 

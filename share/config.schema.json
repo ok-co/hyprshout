@@ -331,7 +331,7 @@
     "voice_control_enabled": {
       "type": "boolean",
       "default": false,
-      "description": "Hands-free control by voice. The start word opens a quiet command session, the end word closes it, and a decision model picks what happens next: a dictation (pasted, raw, translated, or applied to the scratchpad draft), a scratchpad operation (paste, copy, undo, clear, read aloud) or paste/copy of the last dictation. The end word also stops any running recording. Needs openWakeWord in the service's Python, an OpenRouter API key ('hyprwhspr config llm'), PipeWire or PulseAudio, and a local or REST backend; not available in long_form mode."
+      "description": "Hands-free control by voice. The start word opens a quiet command session, the end word closes it, and a decision model picks what happens next: a dictation (pasted, raw, translated, or applied to the scratchpad draft), a scratchpad operation (paste, copy, undo, clear, read aloud), paste/copy of the last dictation, or a question to the voice assistant, answered aloud. The end word also stops any running recording. Needs openWakeWord in the service's Python, an OpenRouter API key ('hyprwhspr config llm'), PipeWire or PulseAudio, and a local or REST backend; not available in long_form mode."
     },
     "voice_control_start_word": {
       "type": "string",
@@ -402,6 +402,41 @@
       "items": { "type": "string", "minLength": 1 },
       "default": ["en", "de", "fr", "es", "it", "pt", "nl", "pl"],
       "description": "Language codes a command can name, as the language to dictate in or to translate into. Empty: commands never set a language."
+    },
+    "assistant_model": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Model that answers voice assistant questions, on the llm_refine_* provider. Null = llm_refine_model (or the provider default)."
+    },
+    "assistant_prompt": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "System prompt for the voice assistant, replacing the built-in one (Jarvis: helpful, brief, dryly funny, written for speech). The current time and the wake words it must not say are appended to any prompt."
+    },
+    "assistant_prompt_file": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Path to a file holding the voice assistant's system prompt, read on every question, so edits apply without a restart. Wins over assistant_prompt; a file that can't be read is an error."
+    },
+    "assistant_voice": {
+      "type": "string",
+      "enum": ["george", "sarah", "adam", "alice", "bella", "bill", "brian", "callum", "charlie", "chris", "daniel", "eric", "harry", "jessica", "laura", "liam", "lily", "matilda", "river", "roger", "will"],
+      "default": "george",
+      "description": "Voice the assistant's replies are read in, with scratchpad_speech_model."
+    },
+    "assistant_timeout": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 300,
+      "default": 30,
+      "description": "Seconds to wait for the assistant's reply."
+    },
+    "assistant_memory_minutes": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1440,
+      "default": 5,
+      "description": "A question asked within this many minutes of the last reply continues the conversation, so follow-ups keep their context. 0: every question starts fresh."
     },
     "scratchpad_preview": {
       "type": "boolean",

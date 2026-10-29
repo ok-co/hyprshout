@@ -198,6 +198,27 @@ class VoiceControlTests(unittest.TestCase):
         # Every start stops the draft being read aloud: the microphone would hear it
         self.assertEqual(app._stop_scratchpad_speech.call_count, 2)
 
+    def test_every_start_silences_the_assistant(self):
+        app = self.app()
+        app._start_recording = types.MethodType(self.App._start_recording, app)
+        app._voice_preempt = mock.Mock()
+        app._stop_scratchpad_speech = mock.Mock()
+        app._stop_assistant_speech = mock.Mock()
+        app.text_injector = mock.Mock()
+        app.text_injector.stream_busy.return_value = False
+        app.whisper_manager.realtime_client_missing.return_value = False
+        app.whisper_manager.realtime_busy.return_value = False
+        app._file_transcription_active = False
+        app._start_settled = threading.Event()
+        app._release_blocked_capture = mock.Mock()
+        app._clear_mic_osd_preview_text = mock.Mock(side_effect=RuntimeError('stop after gate'))
+        for attr in ('_hide_mic_osd', '_stop_audio_level_monitoring', '_cancel_live_typing',
+                     '_write_recording_status', '_restore_recording_playback'):
+            setattr(app, attr, mock.Mock())
+        app._start_recording(route='assistant', voice_plan=self.DictationPlan(route='assistant'))
+        app._stop_assistant_speech.assert_called_once_with()
+        self.assertEqual(app._current_route, 'assistant')
+
     def test_the_start_word_stops_the_draft_being_read_aloud(self):
         app = self.app()
         app._scratchpad_speech = mock.Mock()
@@ -410,6 +431,52 @@ class VoiceControlTests(unittest.TestCase):
         self.assertTrue(app._live_typing_eligible())
         app._voice_plan = self.DictationPlan()
         self.assertFalse(app._live_typing_eligible())
+
+    # ------------------------ voice assistant ------------------------
+
+    def test_ask_decisions_answer_the_command_aloud(self):
+        app = self.app()
+        seen = []
+
+        def respond(text, still_wanted):
+            seen.append((text, app._voice_state, still_wanted()))
+            app._voice_cancel_command("cancel requested")  # cancel while the LLM runs
+            seen.append(still_wanted())
+            return True
+        app._assistant_respond = mock.Mock(side_effect=respond)
+        self.run_command(app, 'Hey Jarvis, what is the capital of Peru?',
+                         self.VoiceDecision('ask', 0.9))
+        self.assertEqual(seen, [('what is the capital of Peru?', 'acting', True), False])
+        app._start_recording.assert_not_called()
+        app._notify_user.assert_not_called()
+
+    def test_assistant_decisions_record_the_question(self):
+        app = self.app()
+        self.run_command(app, 'Jarvis, I need you', self.VoiceDecision('assistant', 0.9))
+        app._start_recording.assert_called_once_with(
+            language_override=None, route='assistant', voice_plan=self.DictationPlan(route='assistant'))
+
+    def test_assistant_dictations_go_to_the_assistant(self):
+        for answered, outcome in ((True, self.outcome.CONSUMED), (False, self.outcome.FAILED)):
+            app = self.delivery_app()
+            app._assistant_respond = mock.Mock(return_value=answered)
+            with self.subTest(answered=answered):
+                result = app._inject_text('tell me a joke', route='assistant',
+                                          voice_plan=self.DictationPlan(route='assistant'))
+                self.assertEqual(result, outcome)
+                app._assistant_respond.assert_called_once_with('tell me a joke')
+                app.text_injector.inject_text.assert_not_called()
+
+    def test_the_start_word_and_cancel_silence_the_assistant(self):
+        app = self.app()
+        app._assistant_speech = mock.Mock()
+        app._on_wake_event('start', 1.0)
+        app._assistant_speech.stop.assert_called_once_with()
+
+        app = self.app()
+        app._assistant_speech = mock.Mock()
+        self.App._cancel_recording(app)
+        app._assistant_speech.stop.assert_called_once_with()
 
     # ------------------------ startup ------------------------
 

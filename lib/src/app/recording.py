@@ -95,7 +95,8 @@ class RecordingMixin:
                               (overrides the default language from config)
             route: Where this session's dictation goes: 'paste', 'translate'
                    (the LLM translates it into llm_translate_language before
-                   it is pasted) or 'scratchpad' (an edit to the draft)
+                   it is pasted), 'scratchpad' (an edit to the draft) or
+                   'assistant' (a question answered aloud)
             voice_plan: DictationPlan of a voice-started dictation; None for a
                         manual start, which also cancels a pending voice command
         """
@@ -149,8 +150,9 @@ class RecordingMixin:
         if blocked is not None:
             self._release_blocked_capture()
         else:
-            # The microphone would hear the draft being read aloud
+            # The microphone would hear the draft or a reply being read aloud
             self._stop_scratchpad_speech()
+            self._stop_assistant_speech()
             if voice_plan is None:
                 self._voice_preempt()
 
@@ -436,7 +438,7 @@ class RecordingMixin:
     def _live_typing_eligible(self) -> bool:
         """Opted in, allowed by config (see live_typing_conflict), and no capture client waiting."""
         if self._current_route != 'paste':
-            return False  # translation and scratchpad edits need the whole dictation
+            return False  # translations, scratchpad edits and questions need the whole dictation
         if not self.config.get_setting('realtime_live_typing', False):
             return False
         if self._recording_control_server.has_capture_subscriber():
@@ -596,8 +598,9 @@ class RecordingMixin:
                 self._current_route = 'paste'
                 self._ptt_reset()
         if not recording:
-            # Nothing recording: cancel drops a pending voice command instead
+            # Nothing recording: cancel drops a pending voice command and silences the assistant
             self._voice_cancel_command("cancel requested")
+            self._stop_assistant_speech()
             return
 
         log("Recording cancelled (discarded)")
@@ -832,7 +835,8 @@ class RecordingMixin:
         """Inject transcribed text into active application
 
         route 'translate' has the LLM translate it first; 'scratchpad' applies
-        it to the draft instead of pasting. voice_plan carries a voice-started
+        it to the draft instead of pasting; 'assistant' asks the voice
+        assistant, which answers aloud. voice_plan carries a voice-started
         dictation's own options (raw, translation language).
         """
 
@@ -846,6 +850,9 @@ class RecordingMixin:
             if outcome != InjectionOutcome.FAILED:
                 self._mark_delivery_healthy()
             return outcome
+
+        if route == 'assistant':
+            return InjectionOutcome.CONSUMED if self._assistant_respond(text) else InjectionOutcome.FAILED
 
         try:
             outcome = self.text_injector.inject_text(

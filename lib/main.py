@@ -88,10 +88,11 @@ from app.control import ControlMixin
 from app.recovery import RecoveryMixin
 from app.scratchpad import ScratchpadMixin
 from app.voice import VoiceControlMixin
+from app.assistant import AssistantMixin
 from scratchpad import Scratchpad
 
 class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, ControlMixin, RecoveryMixin,
-                   ScratchpadMixin, VoiceControlMixin):
+                   ScratchpadMixin, VoiceControlMixin, AssistantMixin):
     """Main application class for hyprwhspr voice dictation (Headless Mode)"""
 
     def _diagnostics_snapshot(self):
@@ -134,7 +135,7 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
         # Application state
         self.is_recording = False
         self._current_language_override = None  # Language override for current recording session
-        self._current_route = 'paste'  # Where this session's dictation goes: 'paste' | 'translate' | 'scratchpad'
+        self._current_route = 'paste'  # Where this session's dictation goes: 'paste' | 'translate' | 'scratchpad' | 'assistant'
         self.is_processing = False
         self._file_transcription_active = False
         # Long-form keeps its own state machine, so it claims this flag under
@@ -279,6 +280,8 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
         self._voice_plan = None
         self._voice_start_phrase = None
         self._voice_end_phrase = None
+        self._assistant = None  # voice_assistant.Conversation, made on the first question
+        self._assistant_speech = None  # SpeechPlayer for the assistant's replies, made on first use
 
         # Track startup time BEFORE any monitors are initialized
         # This prevents race condition where hotplug events arrive before _startup_time is set
@@ -513,6 +516,7 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
             cleanup_step("stop scratchpad speak shortcut",
                          lambda: call_optional('_scratchpad_speak_shortcuts', 'stop'))
             cleanup_step("stop reading the scratchpad", lambda: call_optional('_scratchpad_speech', 'stop'))
+            cleanup_step("stop the assistant speaking", lambda: call_optional('_assistant_speech', 'stop'))
             cleanup_step("stop scratchpad preview", self._stop_scratchpad_preview)
 
             # Stop cancel shortcut
