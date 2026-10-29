@@ -82,6 +82,34 @@ Then run the interactive setup:
 hyprwhspr setup
 ```
 
+<details>
+<summary>Build from source on Arch</summary>
+
+Builds from a git checkout instead of the AUR package. Remove the AUR package
+first (`sudo pacman -R hyprwhspr`) so the two installs don't compete.
+
+```bash
+curl -fsSL https://hyprwhspr.com/install.sh | HYPRWHSPR_FROM_SOURCE=1 bash
+```
+
+Or by hand:
+
+```bash
+git clone https://github.com/goodroot/hyprwhspr.git
+cd hyprwhspr
+
+# Install dependencies with pacman
+./scripts/install-deps.sh
+
+# Run interactive setup
+./bin/hyprwhspr setup
+```
+
+Update a source build by re-running the installer, or with `git pull` in the
+checkout followed by `./bin/hyprwhspr setup`.
+
+</details>
+
 #### Ubuntu, Debian, Fedora, openSUSE
 
 ```bash
