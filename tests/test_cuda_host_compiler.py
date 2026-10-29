@@ -256,7 +256,7 @@ class CudaHostCompilerTests(unittest.TestCase):
             warning.assert_any_call(
                 "No installed g++ is compatible with CUDA's GCC <= 14 requirement"
             )
-            warning.assert_any_call("Install a GCC 14 toolchain (on Arch: yay -S gcc14 gcc14-libs)")
+            warning.assert_any_call("Install a GCC 14 toolchain (on Arch: sudo pacman -S gcc14 gcc14-libs)")
             warning.assert_any_call("Or set HYPRWHSPR_CUDA_HOST to a compatible g++ executable")
 
 

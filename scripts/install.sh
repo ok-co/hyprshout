@@ -132,24 +132,35 @@ echo -e "${BLUE}  hyprwhspr installer${NC}"
 echo -e "${BLUE}============================================================${NC}"
 echo ""
 
-if [[ -f /etc/os-release ]]; then
-    # shellcheck disable=SC1091
-    . /etc/os-release
+OS_RELEASE_FILE="${OS_RELEASE_FILE:-/etc/os-release}"
+if [[ -f "$OS_RELEASE_FILE" ]]; then
+    # shellcheck disable=SC1090
+    . "$OS_RELEASE_FILE"
     if [[ "${ID:-}" == "arch" || " ${ID_LIKE:-} " == *" arch "* ]]; then
-        log "Arch-based system detected — hyprwhspr is on the AUR:"
-        echo ""
-        echo "  yay -S hyprwhspr        # stable"
-        echo "  yay -S hyprwhspr-git    # bleeding edge"
-        echo ""
-        echo "Then run: hyprwhspr setup"
-        exit 0
-    fi
-    # Pre-flight before cloning; install-deps.sh remains the authority
-    case " ${ID:-} ${ID_LIKE:-} " in
-        *debian*|*ubuntu*|*fedora*|*rhel*|*suse*) ;;
-        *) die "Unsupported distro '${ID:-unknown}' — supported: Ubuntu, Debian, Fedora, openSUSE (and derivatives).
+        if [[ "${HYPRWHSPR_FROM_SOURCE:-0}" != 1 ]]; then
+            log "Arch-based system detected — hyprwhspr is on the AUR:"
+            echo ""
+            echo "  yay -S hyprwhspr        # stable"
+            echo "  yay -S hyprwhspr-git    # bleeding edge"
+            echo ""
+            echo "Then run: hyprwhspr setup"
+            echo ""
+            echo "To build from source instead:"
+            echo "  curl -fsSL https://hyprwhspr.com/install.sh | HYPRWHSPR_FROM_SOURCE=1 bash"
+            exit 0
+        fi
+        # The AUR package and a source checkout would compete for the same services.
+        aur_package=$(pacman -Qq hyprwhspr hyprwhspr-git 2>/dev/null | head -n1 || true)
+        [[ -z "$aur_package" ]] || die "The AUR package '$aur_package' is installed — remove it first (sudo pacman -R $aur_package) or keep using it."
+        log "Arch-based system detected — building from source"
+    else
+        # Pre-flight before cloning; install-deps.sh remains the authority
+        case " ${ID:-} ${ID_LIKE:-} " in
+            *debian*|*ubuntu*|*fedora*|*rhel*|*suse*) ;;
+            *) die "Unsupported distro '${ID:-unknown}' — supported: Arch Linux, Ubuntu, Debian, Fedora, openSUSE (and derivatives).
 See manual install: https://github.com/goodroot/hyprwhspr#other-linux-distros" ;;
-    esac
+        esac
+    fi
 fi
 
 { : </dev/tty; } 2>/dev/null || die "This installer is interactive and needs a terminal.

@@ -909,7 +909,7 @@ def detect_cuda_host_compiler() -> Optional[str]:
             return candidate
 
     log_warning(f"No installed g++ is compatible with CUDA's GCC <= {max_display} requirement")
-    log_warning(f"Install a GCC {max_major} toolchain (on Arch: yay -S gcc{max_major} gcc{max_major}-libs)")
+    log_warning(f"Install a GCC {max_major} toolchain (on Arch: sudo pacman -S gcc{max_major} gcc{max_major}-libs)")
     log_warning("Or set HYPRWHSPR_CUDA_HOST to a compatible g++ executable")
     return None
 
@@ -1074,13 +1074,10 @@ def setup_amd_support() -> bool:
         log_success("ROCm toolkit present")
     else:
         log_warning("ROCm not found")
-        # Try to install on Arch (requires AUR helper), provide guidance on other distros
-        if shutil.which('yay'):
+        # Try to install on Arch (official repos), provide guidance on other distros
+        if shutil.which('pacman'):
             log_info("Installing ROCm toolkit...")
-            run_sudo_command(['yay', '-S', '--needed', '--noconfirm', 'rocm-hip-sdk', 'rocm-opencl-sdk'], check=False)
-        elif shutil.which('pacman'):
-            log_info("ROCm requires an AUR helper (yay) on Arch Linux")
-            log_info("Install yay first, then re-run setup")
+            run_sudo_command(['pacman', '-S', '--needed', '--noconfirm', 'rocm-hip-sdk', 'rocm-opencl-sdk'], check=False)
         else:
             log_info("Please install ROCm using your distribution's package manager:")
             log_info("  Ubuntu: Follow https://rocm.docs.amd.com/en/latest/deploy/linux/installer/install.html")

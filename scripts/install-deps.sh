@@ -3,7 +3,7 @@
 # hyprwhspr Dependency Installation Script
 #
 # This script installs dependencies for hyprwhspr on Linux systems.
-# Supports: Ubuntu, Debian, Fedora, openSUSE
+# Supports: Arch Linux, Ubuntu, Debian, Fedora, openSUSE
 #
 # It also handles the ydotool version issue on Ubuntu/Debian where the
 # apt repositories contain an outdated 0.1.x version that is incompatible.
@@ -32,6 +32,7 @@ MIN_YDOTOOL_VERSION="1.0.0"
 DISTRO=""
 DISTRO_VERSION=""
 PKG_MANAGER=""
+OS_RELEASE_FILE="${OS_RELEASE_FILE:-/etc/os-release}"
 # Honour an interpreter chosen by the caller (managed_install.update() exports the
 # one interpreter() already validated); otherwise resolve_install_python picks one.
 INSTALL_DEPS_PYTHON="${INSTALL_DEPS_PYTHON:-}"
@@ -98,16 +99,19 @@ log_error() {
 
 # Detect Linux distribution
 detect_distro() {
-    if [[ ! -f /etc/os-release ]]; then
-        log_error "Cannot detect distribution (/etc/os-release not found)"
+    if [[ ! -f "$OS_RELEASE_FILE" ]]; then
+        log_error "Cannot detect distribution ($OS_RELEASE_FILE not found)"
         exit 1
     fi
 
-    . /etc/os-release
+    . "$OS_RELEASE_FILE"
 
     DISTRO_VERSION="${VERSION_ID:-unknown}"
 
-    if [[ "$ID" == "ubuntu" ]]; then
+    if [[ "$ID" == "arch" || " ${ID_LIKE:-} " == *" arch "* ]]; then
+        DISTRO="arch"
+        PKG_MANAGER="pacman"
+    elif [[ "$ID" == "ubuntu" ]]; then
         DISTRO="ubuntu"
         PKG_MANAGER="apt"
     elif [[ "$ID" == "debian" ]]; then
@@ -130,8 +134,7 @@ detect_distro() {
         PKG_MANAGER="zypper"
     else
         log_error "Unsupported distribution: $ID"
-        log_info "Supported: Ubuntu, Debian, Fedora, openSUSE (and derivatives)"
-        log_info "For Arch Linux, use: yay -S hyprwhspr"
+        log_info "Supported: Arch Linux, Ubuntu, Debian, Fedora, openSUSE (and derivatives)"
         exit 1
     fi
 
@@ -417,6 +420,61 @@ install_deps_apt() {
     log_success "System dependencies installed"
 }
 
+# Install dependencies for Arch Linux and derivatives. Every package is in the
+# official repositories, so no AUR helper is needed.
+install_deps_pacman() {
+    log_info "Installing system dependencies via pacman..."
+
+    local aur_package
+    aur_package=$(pacman -Qq hyprwhspr hyprwhspr-git 2>/dev/null | head -n1 || true)
+    if [[ -n "$aur_package" ]]; then
+        log_warning "The AUR package '$aur_package' is installed; a source checkout will compete with it."
+        log_info "Remove it first for a source build: sudo pacman -R $aur_package"
+    fi
+
+    # --needed keeps already-installed packages; no -y, which would be a partial upgrade.
+    sudo pacman -S --needed --noconfirm \
+        git \
+        base-devel \
+        python \
+        python-pip \
+        python-numpy \
+        python-evdev \
+        python-requests \
+        python-rich \
+        python-jsonschema \
+        python-pyudev \
+        python-dbus \
+        python-gobject \
+        python-cairo \
+        python-pyperclip \
+        python-websocket-client \
+        gtk4 \
+        gtk4-layer-shell \
+        portaudio \
+        pipewire \
+        libpulse \
+        ydotool \
+        wtype \
+        wl-clipboard \
+        xclip \
+        xdotool \
+        xorg-xprop
+
+    # pipewire-pulse conflicts with pulseaudio; keep an existing PulseAudio server.
+    if pacman -Qq pulseaudio &> /dev/null; then
+        log_info "PulseAudio is installed; keeping it instead of pipewire-pulse"
+    else
+        sudo pacman -S --needed --noconfirm pipewire-pulse
+    fi
+
+    # sounddevice and pulsectl are only packaged in the AUR; setup installs them
+    # from PyPI into the application environment instead.
+    log_info "sounddevice and pulsectl will be installed in the application environment during setup"
+
+    log_success "System dependencies installed"
+}
+
 # Install dependencies for Fedora
 install_deps_dnf() {
     log_info "Installing system dependencies via dnf..."
@@ -597,7 +655,7 @@ handle_ydotool_debian() {
     fi
 }
 
-# Handle ydotool for Fedora/openSUSE (usually fine from repos)
+# Handle ydotool for Arch/Fedora/openSUSE (usually fine from repos)
 handle_ydotool_other() {
     echo ""
     echo -e "${BLUE}ydotool Version Check${NC}"
@@ -645,6 +703,9 @@ main() {
     echo "------------------------------------------------------------"
 
     case "$PKG_MANAGER" in
+        pacman)
+            install_deps_pacman
+            ;;
         apt)
             install_deps_apt
             ;;
