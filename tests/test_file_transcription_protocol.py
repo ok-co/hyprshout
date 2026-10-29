@@ -14,12 +14,13 @@ from recording_control_server import RecordingControlServer  # noqa: E402
 
 
 class FileTranscriptionProtocolTests(unittest.TestCase):
-    def _exchange(self, request, callback=None, recover=None, stopping=False):
+    def _exchange(self, request, callback=None, recover=None, stopping=False, scratchpad=None):
         callback = callback or (lambda path, language, clean: (True, 'text'))
         stop_event = threading.Event()
         server = RecordingControlServer(
             '/tmp/unused-fifo', '/tmp/unused-socket', lambda *_: None,
             lambda: False, on_file_transcribe=callback, on_recover=recover,
+            on_scratchpad=scratchpad,
         )
         server._stop_event = stop_event
         if stopping:
@@ -64,6 +65,31 @@ class FileTranscriptionProtocolTests(unittest.TestCase):
         recover.reset_mock()
         self.assertIn('shutting down', self._exchange(request, recover=recover, stopping=True)['error'])
         recover.assert_not_called()
+
+    def test_scratchpad_requests_reach_their_handler(self):
+        transcribe = mock.Mock()
+        for verb in ('scratchpad_paste', 'scratchpad_copy', 'scratchpad_clear', 'scratchpad_undo'):
+            with self.subTest(verb=verb):
+                handler = mock.Mock(return_value=(True, 'done'))
+                response = self._exchange(json.dumps({'verb': verb}).encode() + b'\n',
+                                          callback=transcribe, scratchpad=handler)
+                self.assertEqual(response, {'ok': True, 'message': 'done'})
+                handler.assert_called_once_with(verb)
+        transcribe.assert_not_called()
+
+    def test_scratchpad_show_returns_the_draft_as_text(self):
+        handler = mock.Mock(return_value=(True, 'line one\nline two'))
+        response = self._exchange(b'{"verb":"scratchpad_show"}\n', scratchpad=handler)
+        self.assertEqual(response, {'ok': True, 'text': 'line one\nline two'})
+
+    def test_scratchpad_failure_unavailable_and_shutdown(self):
+        request = b'{"verb":"scratchpad_undo"}\n'
+        handler = mock.Mock(return_value=(False, 'Nothing to undo'))
+        self.assertEqual(self._exchange(request, scratchpad=handler), {'ok': False, 'error': 'Nothing to undo'})
+        self.assertIn('unavailable', self._exchange(request)['error'])
+        handler.reset_mock()
+        self.assertIn('shutting down', self._exchange(request, scratchpad=handler, stopping=True)['error'])
+        handler.assert_not_called()
 
     def test_structured_request_and_success_response(self):
         seen = []

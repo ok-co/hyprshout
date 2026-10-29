@@ -84,6 +84,13 @@ class ScratchpadStoreTests(unittest.TestCase):
         self.assertEqual(self.pad.undo(), "draft")
         self.assertEqual(self.pad.read(), "draft")
 
+    def test_clear_with_expected_skips_a_draft_that_changed(self):
+        self.pad.set("pasted version")
+        self.pad.set("pasted version, then more")
+        self.assertFalse(self.pad.clear(expected="pasted version"))
+        self.assertEqual(self.pad.read(), "pasted version, then more")
+        self.assertTrue(self.pad.clear(expected="pasted version, then more"))
+
     def test_an_unchanged_result_adds_no_history(self):
         self.pad.set("same")
         self.pad.apply("noop", lambda draft, dictation: draft)

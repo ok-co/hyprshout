@@ -76,10 +76,11 @@ class ControlMixin:
     def _handle_control_command(self, action, language=None):
         """Apply recording policy for a command received by the control server.
 
-        "translate" is a start whose dictation the LLM translates.
+        "translate" is a start whose dictation the LLM translates;
+        "scratchpad" one whose dictation edits the scratchpad draft.
         """
         recording_mode = self.config.get_setting("recording_mode", "toggle")
-        if action in ("start", "translate"):
+        if action in ("start", "translate", "scratchpad"):
             route = "paste" if action == "start" else action
             lang_info = f" (language: {language})" if language else ""
             if route != "paste":

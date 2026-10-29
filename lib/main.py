@@ -86,8 +86,11 @@ from app.silence import SilenceMixin
 from app.feedback import FeedbackMixin
 from app.control import ControlMixin
 from app.recovery import RecoveryMixin
+from app.scratchpad import ScratchpadMixin
+from scratchpad import Scratchpad
 
-class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, ControlMixin, RecoveryMixin):
+class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, ControlMixin, RecoveryMixin,
+                   ScratchpadMixin):
     """Main application class for hyprwhspr voice dictation (Headless Mode)"""
 
     def _diagnostics_snapshot(self):
@@ -118,7 +121,11 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
         self.global_shortcuts = None
         self.secondary_shortcuts = None
         self._translate_shortcuts = None
+        self._scratchpad_shortcuts = None
+        self._scratchpad_paste_shortcuts = None
         self._cancel_shortcuts = None
+        self._scratchpad = Scratchpad()  # Draft built by scratchpad dictations, pasted when ready
+        self._scratchpad_notification_id = None
 
         # Application state
         self.is_recording = False
@@ -202,6 +209,7 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
             is_recording=lambda: self.is_recording,
             on_file_transcribe=self._handle_file_transcribe,
             on_recover=self._handle_recovery,
+            on_scratchpad=self._handle_scratchpad_request,
             on_diagnostics=self._diagnostics_snapshot,
         )
 
@@ -471,6 +479,11 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
 
             # Stop translate shortcut
             cleanup_step("stop translate shortcut", lambda: call_optional('_translate_shortcuts', 'stop'))
+
+            # Stop scratchpad shortcuts
+            cleanup_step("stop scratchpad shortcut", lambda: call_optional('_scratchpad_shortcuts', 'stop'))
+            cleanup_step("stop scratchpad paste shortcut",
+                         lambda: call_optional('_scratchpad_paste_shortcuts', 'stop'))
 
             # Stop cancel shortcut
             cleanup_step("stop cancel shortcut", lambda: call_optional('_cancel_shortcuts', 'stop'))

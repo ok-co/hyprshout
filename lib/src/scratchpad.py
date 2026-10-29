@@ -72,11 +72,15 @@ class Scratchpad:
         with self._lock:
             self._replace(self._read_raw(), (text or '').strip())
 
-    def clear(self) -> bool:
-        """Empty the draft. False if it was already empty."""
+    def clear(self, expected: Optional[str] = None) -> bool:
+        """Empty the draft. False if it was already empty.
+
+        With expected, clear only if the draft still is that text (a paste
+        must not clear a dictation that landed after the draft was read).
+        """
         with self._lock:
             before = self._read_raw()
-            if not before.strip():
+            if not before.strip() or (expected is not None and before.rstrip() != expected):
                 return False
             self._replace(before, '')
             return True

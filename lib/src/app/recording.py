@@ -785,13 +785,20 @@ class RecordingMixin:
     def _inject_text(self, text, route='paste'):
         """Inject transcribed text into active application
 
-        route 'translate' has the LLM translate it first.
+        route 'translate' has the LLM translate it first; 'scratchpad' applies
+        it to the draft instead of pasting.
         """
 
         # Capture mode: route text to client instead of injecting into active app
         if self._recording_control_server.has_capture_subscriber():
             self._notify_capture(text, final=True)
             return InjectionOutcome.INJECTED
+
+        if route == 'scratchpad':
+            outcome = self._scratchpad_apply(text)
+            if outcome != InjectionOutcome.FAILED:
+                self._mark_delivery_healthy()
+            return outcome
 
         try:
             outcome = self.text_injector.inject_text(text, translate=route == 'translate')
