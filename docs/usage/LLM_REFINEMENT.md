@@ -112,7 +112,9 @@ trigger pastes the cleaned-up translation.
 }
 ```
 
-From a [compositor binding or script](HOTKEYS.md#external-hotkey-systems), add `--translate`:
+With [compositor bindings](HOTKEYS.md#translate-key) (`external_bindings`), `translate_shortcut` is ignored; bind
+`--translate` (or, for push-to-talk, `translate` written to the control FIFO) instead. From any
+[hotkey system or script](HOTKEYS.md#external-hotkey-systems), add `--translate`:
 
 ```bash
 hyprwhspr record toggle --translate
