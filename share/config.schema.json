@@ -277,6 +277,18 @@
       "default": "English",
       "description": "Language the LLM translates into for translate_shortcut and 'hyprwhspr record start/toggle --translate', given as a name or code (e.g. 'English', 'German', 'pt-BR'). Other dictations are not translated."
     },
+    "scratchpad_model": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Model for scratchpad edits, on the llm_refine_* provider. Null = llm_refine_model (or the provider default)."
+    },
+    "scratchpad_timeout": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 300,
+      "default": 30,
+      "description": "Seconds to wait for one scratchpad edit. The LLM rewrites the whole draft, so this is longer than llm_refine_timeout. On timeout or any error the draft is kept unchanged."
+    },
     "clipboard_behavior": {
       "type": "boolean",
       "default": false,

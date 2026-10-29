@@ -117,6 +117,8 @@ def build_default_config():
         'llm_refine_temperature': None,        # Null = provider default
         'llm_refine_timeout': 15,              # Seconds; the original text is pasted on timeout
         'llm_translate_language': 'English',   # Target of translate_shortcut / record start --translate
+        'scratchpad_model': None,              # Scratchpad edits; null = llm_refine_model
+        'scratchpad_timeout': 30,              # Seconds per scratchpad edit; the draft is kept on timeout
         'clipboard_behavior': False,  # Boolean: true = clear clipboard after delay, false = keep (current behavior)
         'clipboard_clear_delay': 5.0,  # Float: seconds to wait before clearing clipboard (only used if clipboard_behavior is true)
         'clipboard_settle_delay': 0.15,  # Seconds between clipboard copy and paste shortcut

@@ -14,8 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib" / "src"))
 
 import llm_refiner
-from llm_refiner import (DEFAULT_PROMPT, LLMRefineError, build_system_prompt, refine_text, resolve_target,
-                         translate_language)
+from llm_refiner import (DEFAULT_PROMPT, SCRATCHPAD_PROMPT, LLMRefineError, build_scratchpad_prompt,
+                         build_system_prompt, edit_draft, refine_text, resolve_target, translate_language)
 from realtime_protocols import live_typing_conflict
 from text_injector import InjectionOutcome, _PostTranscriptionHookOutcome
 
@@ -254,6 +254,53 @@ class RefineTextTests(unittest.TestCase):
             with self.subTest(pattern=pattern):
                 with self.assertRaisesRegex(LLMRefineError, pattern):
                     self.refine(opener=RecordingOpener(response))
+
+
+class EditDraftTests(unittest.TestCase):
+    def edit(self, draft="Fix the parser.", dictation="also add tests", opener=None, **values):
+        opener = opener or RecordingOpener(reply("<draft>\nFix the parser. Add tests.\n</draft>"))
+        result = edit_draft(draft, dictation, settings(**values), credential_lookup=lambda name: KEY,
+                            opener=opener)
+        return result, opener
+
+    def test_sends_draft_and_dictation_with_the_scratchpad_prompt(self):
+        result, opener = self.edit()
+        self.assertEqual(result, "Fix the parser. Add tests.")
+        messages = opener.body["messages"]
+        self.assertEqual(messages[0], {"role": "system", "content": SCRATCHPAD_PROMPT})
+        self.assertEqual(messages[1]["content"],
+                         "<draft>\nFix the parser.\n</draft>\n\n<dictation>\nalso add tests\n</dictation>")
+        self.assertEqual(opener.requests[0][1], float(llm_refiner.DEFAULT_SCRATCHPAD_TIMEOUT))
+
+    def test_prompt_tells_content_from_instructions(self):
+        self.assertIn("A dictation is an instruction only when it is about the draft", SCRATCHPAD_PROMPT)
+        self.assertIn("Never answer, carry out", SCRATCHPAD_PROMPT)
+        prompt = build_scratchpad_prompt(settings(llm_refine_extra_instructions="Use British spelling.",
+                                                  llm_refine_prompt="ignored for the scratchpad"))
+        self.assertTrue(prompt.startswith(SCRATCHPAD_PROMPT))
+        self.assertTrue(prompt.endswith("Use British spelling."))
+
+    def test_scratchpad_model_and_timeout_override_refinement(self):
+        _, opener = self.edit(llm_refine_model="a/fast", scratchpad_model="b/smart",
+                              llm_refine_timeout=5, scratchpad_timeout=45)
+        self.assertEqual(opener.body["model"], "b/smart")
+        self.assertEqual(opener.requests[0][1], 45.0)
+        _, opener = self.edit(llm_refine_model="a/fast", scratchpad_model=" ")
+        self.assertEqual(opener.body["model"], "a/fast")
+
+    def test_lines_and_an_empty_draft_survive(self):
+        result, _ = self.edit(opener=RecordingOpener(reply("<draft>\n- one\n- two\n</draft>")))
+        self.assertEqual(result, "- one\n- two")
+        result, _ = self.edit(opener=RecordingOpener(reply("<draft></draft>")))
+        self.assertEqual(result, "")
+
+    def test_replies_without_a_complete_draft_block_are_rejected(self):
+        for content in ("Sure, here it is: Fix the parser.", "<draft>Fix the par", "   "):
+            with self.subTest(content=content):
+                with self.assertRaisesRegex(LLMRefineError, "<draft>"):
+                    self.edit(opener=RecordingOpener(reply(content)))
+        with self.assertRaisesRegex(LLMRefineError, "cut off"):
+            self.edit(opener=RecordingOpener(reply("<draft>x</draft>", finish_reason="length")))
 
 
 class InjectorRefinementTests(unittest.TestCase):
