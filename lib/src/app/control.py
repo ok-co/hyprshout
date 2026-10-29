@@ -80,15 +80,15 @@ class ControlMixin:
         """
         recording_mode = self.config.get_setting("recording_mode", "toggle")
         if action in ("start", "translate"):
-            translate = action == "translate"
+            route = "paste" if action == "start" else action
             lang_info = f" (language: {language})" if language else ""
-            if translate:
-                lang_info += " (translate)"
+            if route != "paste":
+                lang_info += f" ({route})"
             if recording_mode == "long_form":
-                self._longform.request_start(language_override=language, translate=translate)
+                self._longform.request_start(language_override=language, route=route)
             elif not self.is_recording:
                 log(f"[CONTROL] Recording start requested (immediate){lang_info}")
-                self._start_recording(language_override=language, translate=translate)
+                self._start_recording(language_override=language, route=route)
                 if recording_mode == "continuous":
                     self._continuous_start_silence_monitor()
                 elif recording_mode in ("toggle", "auto"):

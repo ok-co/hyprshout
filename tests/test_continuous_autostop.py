@@ -56,7 +56,7 @@ class ContinuousAutostopTests(unittest.TestCase):
         app._recording_lock = threading.Lock()
         app._recording_session = object()
         app._current_language_override = 'en'
-        app._current_translate = False
+        app._current_route = 'paste'
         app.is_recording = True
         app._continuous_flush_lock = threading.Lock()
         app._continuous_transcription_done = threading.Event()
