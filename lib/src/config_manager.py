@@ -144,6 +144,8 @@ def build_default_config():
         'voice_control_decision_timeout': 10,
         'voice_control_min_confidence': 0.5,     # Below this the decision counts as "didn't understand"
         'voice_control_languages': ['en', 'de', 'fr', 'es', 'it', 'pt', 'nl', 'pl'],  # Languages commands can name
+        'scratchpad_preview': True,            # Show the draft in an overlay panel while drafting (layer-shell compositors)
+        'scratchpad_preview_seconds': 8,       # How long the panel stays after a change; 0 = until paste or clear
         'clipboard_behavior': False,  # Boolean: true = clear clipboard after delay, false = keep (current behavior)
         'clipboard_clear_delay': 5.0,  # Float: seconds to wait before clearing clipboard (only used if clipboard_behavior is true)
         'clipboard_settle_delay': 0.15,  # Seconds between clipboard copy and paste shortcut

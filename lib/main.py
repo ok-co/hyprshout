@@ -129,6 +129,7 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
         self._scratchpad = Scratchpad()  # Draft built by scratchpad dictations, pasted when ready
         self._scratchpad_notification_id = None
         self._scratchpad_speech = None  # SpeechPlayer reading the draft aloud, made on first use
+        self._scratchpad_panel = None  # Preview panel runner, created on first use (False: unavailable)
 
         # Application state
         self.is_recording = False
@@ -340,6 +341,12 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
                 import traceback
                 traceback.print_exc()
 
+        # Decide on the scratchpad preview panel now (its layer-shell probe can
+        # take a moment) rather than when the first scratchpad recording starts
+        if self.config.get_setting('scratchpad_shortcut', None):
+            threading.Thread(target=self._scratchpad_panel_runner, daemon=True,
+                             name="ScratchpadPanelProbe").start()
+
         if hasattr(self.whisper_manager, 'set_realtime_partial_callback'):
             self.whisper_manager.set_realtime_partial_callback(self._set_mic_osd_preview_text)
         if hasattr(self.whisper_manager, 'set_realtime_live_listener'):
@@ -506,6 +513,7 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
             cleanup_step("stop scratchpad speak shortcut",
                          lambda: call_optional('_scratchpad_speak_shortcuts', 'stop'))
             cleanup_step("stop reading the scratchpad", lambda: call_optional('_scratchpad_speech', 'stop'))
+            cleanup_step("stop scratchpad preview", self._stop_scratchpad_preview)
 
             # Stop cancel shortcut
             cleanup_step("stop cancel shortcut", lambda: call_optional('_cancel_shortcuts', 'stop'))

@@ -46,6 +46,7 @@ class ScratchpadTriggerTests(unittest.TestCase):
         app._longform = mock.Mock()
         app._scratchpad = self.Scratchpad(Path(self.tempdir.name) / 'scratchpad.md')
         app._scratchpad_notification_id = None
+        app._scratchpad_panel = False  # no preview panel: notifications
         app._show_scratchpad = mock.Mock()
         app._close_scratchpad_notification = mock.Mock()
         app._notify_user = mock.Mock()
@@ -129,7 +130,8 @@ class ScratchpadTriggerTests(unittest.TestCase):
         edit.assert_called_once_with('Fix the parser.', 'also add tests', app.config.get_setting)
         self.assertEqual(app._scratchpad.read(), 'Fix the parser.\nAdd tests.')
         app.text_injector.inject_text.assert_not_called()
-        app._show_scratchpad.assert_called_once_with('Fix the parser.\nAdd tests.')
+        app._show_scratchpad.assert_called_once_with(
+            'Fix the parser.\nAdd tests.', previous='Fix the parser.', state='updated')
         app._mark_delivery_healthy.assert_called_once_with()
 
     def test_a_failed_edit_keeps_the_draft_and_the_dictation(self):
@@ -264,6 +266,7 @@ class ScratchpadTriggerTests(unittest.TestCase):
     def test_notification_shows_the_end_of_the_draft_escaped(self):
         app = self.main.hyprwhsprApp.__new__(self.main.hyprwhsprApp)
         app.config = ScratchpadConfig()
+        app._scratchpad_panel = False
         app._scratchpad_notification_id = 7
         send = mock.Mock(return_value=9)
         with mock.patch('desktop_notify.send_notification_with_id', send):

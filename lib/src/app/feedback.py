@@ -299,6 +299,7 @@ class FeedbackMixin:
             self._mic_osd_runner.clear_preview_text()
             self._mic_osd_runner.set_state('recording')
             self._mic_osd_runner.show()
+        self._scratchpad_preview_follow('recording')
 
     def _hide_mic_osd(self):
         """Hide mic-osd visualization overlay"""
@@ -310,6 +311,7 @@ class FeedbackMixin:
                 runner.clear_preview_text()
             except Exception:
                 pass
+        self._scratchpad_preview_settle()
 
     def _set_mic_osd_preview_text(self, text: str):
         """Update live transcript preview text in the mic OSD."""
@@ -336,6 +338,7 @@ class FeedbackMixin:
                 runner.set_state(state)
             except Exception:
                 pass
+        self._scratchpad_preview_follow(state)
 
     def _show_result_and_hide(self, success: bool):
         """Show success/error state then hide the OSD after a delay."""
