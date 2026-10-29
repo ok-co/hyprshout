@@ -1,10 +1,10 @@
 """
-Scratchpad commands: show, paste, copy, clear, undo and edit the draft that
-scratchpad dictations build (hyprwhspr record start --scratchpad).
+Scratchpad commands: show, paste, copy, clear, undo, edit and read aloud the
+draft that scratchpad dictations build (hyprwhspr record start --scratchpad).
 
-show, edit and status read the draft file directly, so they work while the
-daemon is stopped; the rest go through the daemon, which owns the undo
-history and the paste path.
+show, edit, status and voice read the draft or config directly, so they work
+while the daemon is stopped; the rest go through the daemon, which owns the
+undo history, the paste path and playback.
 """
 
 import json
@@ -29,18 +29,35 @@ except ImportError:
     from scratchpad import Scratchpad
 
 try:
+    from ..speech_output import DEFAULT_MODEL as SPEECH_MODEL, VOICES, configured_voice, normalize_voice
+except ImportError:
+    from speech_output import DEFAULT_MODEL as SPEECH_MODEL, VOICES, configured_voice, normalize_voice
+
+try:
     from ..output_control import log_info, log_success, log_error
 except ImportError:
     from output_control import log_info, log_success, log_error
 
 
-DAEMON_ACTIONS = ('paste', 'copy', 'clear', 'undo')
+DAEMON_ACTIONS = ('paste', 'copy', 'clear', 'undo', 'speak', 'stop')
 
 
-def scratchpad_command(action: str = 'show'):
+def scratchpad_command(action: str = 'show', value=None):
     """Handle scratchpad subcommands; exits non-zero on failure."""
     action = action or 'show'
-    if action == 'show':
+    if value is not None and action not in ('speak', 'voice'):
+        log_error(f"scratchpad {action} takes no argument")
+        sys.exit(1)
+    if value is not None and normalize_voice(value) is None:
+        log_error(f"Unknown voice {value!r}; choose one of: {', '.join(VOICES)}")
+        sys.exit(1)
+    if action == 'voice':
+        if not choose_voice(value):
+            sys.exit(1)
+    elif action == 'speak' and value is not None:
+        if not request_daemon(action, voice=normalize_voice(value)):
+            sys.exit(1)
+    elif action == 'show':
         show_draft()
     elif action == 'status':
         show_status()
@@ -75,6 +92,30 @@ def show_status():
     print(f"Timeout:       {config.get_setting('scratchpad_timeout', 30)}s")
     clear = config.get_setting('scratchpad_clear_on_paste', True) is not False
     print(f"After paste:   {'cleared' if clear else 'kept'}")
+    print(f"Speak key:     {config.get_setting('scratchpad_speak_shortcut', None) or 'not set'}")
+    print(f"Voice:         {configured_voice(config.get_setting)} "
+          f"({config.get_setting('scratchpad_speech_model', None) or SPEECH_MODEL})")
+
+
+def choose_voice(value=None) -> bool:
+    """List the voices, or store the one the draft is read in from now on."""
+    config = ConfigManager(verbose=False)
+    current = configured_voice(config.get_setting)
+    if value is None:
+        for voice in VOICES:
+            print(f"{'*' if voice == current else ' '} {voice}")
+        print("Set one with: hyprwhspr scratchpad voice NAME", file=sys.stderr)
+        return True
+    voice = normalize_voice(value)
+    config.set_setting('scratchpad_voice', voice)
+    if not config.save_config():
+        log_error("Could not save the configuration")
+        return False
+    log_success(f"Voice set to {voice}")
+    # A running daemon reads its config only at start; tell it too
+    if SOCKET_FILE.exists():
+        return request_daemon('voice', voice=voice)
+    return True
 
 
 def edit_draft() -> bool:
@@ -96,14 +137,17 @@ def edit_draft() -> bool:
     return True
 
 
-def request_daemon(action: str) -> bool:
+def request_daemon(action: str, voice=None) -> bool:
     """Send one scratchpad request; a paste is never retried."""
+    request = {'verb': f'scratchpad_{action}'}
+    if voice is not None:
+        request['voice'] = voice
     request_sent = False
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.settimeout(15.0)
             client.connect(str(SOCKET_FILE))
-            client.sendall(json.dumps({'verb': f'scratchpad_{action}'}).encode('utf-8') + b'\n')
+            client.sendall(json.dumps(request).encode('utf-8') + b'\n')
             request_sent = True
             response = bytearray()
             while b'\n' not in response:

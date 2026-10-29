@@ -181,6 +181,9 @@ class ShortcutsMixin:
         # Pastes on release, once the chord's modifiers are no longer held
         register('_scratchpad_paste_shortcuts', 'scratchpad_paste_shortcut', 'Scratchpad paste',
                  None, self._on_scratchpad_paste_shortcut)
+        # Reads the draft aloud; pressed again, stops
+        register('_scratchpad_speak_shortcuts', 'scratchpad_speak_shortcut', 'Scratchpad speak',
+                 self._on_scratchpad_speak_shortcut, None)
 
         # Set up cancel shortcut if configured
         try:
@@ -427,6 +430,7 @@ class ShortcutsMixin:
                 self._translate_shortcuts,
                 self._scratchpad_shortcuts,
                 self._scratchpad_paste_shortcuts,
+                getattr(self, '_scratchpad_speak_shortcuts', None),
                 self._cancel_shortcuts,
                 self._longform_submit_shortcuts,
             )

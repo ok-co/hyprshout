@@ -56,6 +56,7 @@ def build_default_config():
         'translate_shortcut': None,  # Optional hotkey that records and has the LLM translate the dictation (e.g., "SUPER+ALT+T")
         'scratchpad_shortcut': None,  # Optional hotkey that records a dictation the LLM applies to the scratchpad draft (e.g., "SUPER+ALT+S")
         'scratchpad_paste_shortcut': None,  # Optional hotkey that pastes the scratchpad draft (e.g., "SUPER+ALT+P")
+        'scratchpad_speak_shortcut': None,  # Optional hotkey that reads the scratchpad draft aloud; pressed again, stops (e.g., "SUPER+ALT+R")
         'cancel_shortcut': None,  # Optional shortcut to cancel recording and discard audio (e.g., "SUPER+ESCAPE")
         'recording_mode': 'toggle',  # 'toggle' | 'push_to_talk' | 'auto' | 'continuous' (auto-paste on silence)
         'continuous_silence_seconds': 2.0,  # Seconds of silence before auto-pasting in continuous mode
@@ -122,6 +123,11 @@ def build_default_config():
         'scratchpad_model': None,              # Scratchpad edits; null = llm_refine_model
         'scratchpad_timeout': 30,              # Seconds per scratchpad edit; the draft is kept on timeout
         'scratchpad_clear_on_paste': True,     # Empty the draft once it is pasted (scratchpad undo restores it)
+        # Reading the draft aloud (speech_output.py) with OpenRouter's speech
+        # endpoint and the OpenRouter key from 'hyprwhspr config llm'
+        'scratchpad_voice': 'sarah',           # One of speech_output.VOICES; hyprwhspr scratchpad voice NAME
+        'scratchpad_speech_model': 'elevenlabs/eleven-v4-turbo',
+        'scratchpad_speech_timeout': 30,       # Seconds per synthesized part of the draft
         # Voice control (app/voice.py): the start word opens a quiet command
         # session, the end word closes it; a decision model on OpenRouter's
         # Decisions API picks the action. Words are openWakeWord model names

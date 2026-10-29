@@ -245,9 +245,13 @@ def main():
         'scratchpad', help='Draft text over several dictations, then paste it')
     scratchpad_parser.add_argument(
         'scratchpad_action', nargs='?', default='show',
-        choices=['show', 'paste', 'copy', 'clear', 'undo', 'edit', 'status'],
+        choices=['show', 'paste', 'copy', 'clear', 'undo', 'edit', 'status', 'speak', 'stop', 'voice'],
         help='show (default): print the draft; paste: into the focused app; copy: to the clipboard; '
-             'clear; undo: the last change; edit: in $EDITOR; status')
+             'clear; undo: the last change; edit: in $EDITOR; status; speak: read the draft aloud '
+             '(again: stop); stop: stop reading; voice: list voices, or set one')
+    scratchpad_parser.add_argument(
+        'scratchpad_value', nargs='?', default=None, metavar='VOICE',
+        help='With speak: the voice for this reading; with voice: the voice to use from now on')
     
     # backend command
     backend_parser = subparsers.add_parser('backend', help='Backend management')
@@ -467,7 +471,7 @@ def main():
                                scratchpad=getattr(args, 'scratchpad', False))
         elif args.command == 'scratchpad':
             from cli.scratchpad import scratchpad_command
-            scratchpad_command(args.scratchpad_action)
+            scratchpad_command(args.scratchpad_action, getattr(args, 'scratchpad_value', None))
         elif args.command == 'uninstall':
             from cli.uninstall import uninstall_command
             uninstall_command(

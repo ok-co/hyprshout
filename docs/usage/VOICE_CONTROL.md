@@ -7,7 +7,7 @@ reads the command and picks what happens next:
 - **Dictate raw**: a dictation pasted exactly as spoken, without [LLM refinement](LLM_REFINEMENT.md)
 - **Translate**: a dictation [translated](LLM_REFINEMENT.md#translation) before it's pasted
 - **Scratchpad**: a dictation into the [scratchpad](SCRATCHPAD.md) draft
-- **Draft**: paste, copy, undo or clear the scratchpad draft
+- **Draft**: paste, copy, undo, clear or [read aloud](SCRATCHPAD.md#reading-the-draft-aloud) the scratchpad draft
 - **Paste last** / **copy last**: deliver the previous dictation again
 
 A dictation started this way ends when you say the end word. The end word also stops any recording you started
@@ -102,6 +102,7 @@ Say what you want in your own words; these are examples.
 | "take a note", "add to the draft", "edit the draft" | dictation into the scratchpad draft |
 | "send the draft" / "copy the draft" | the draft, pasted or copied |
 | "undo that" / "clear the draft" | the draft's last change undone, or the draft cleared |
+| "read me the draft", "what does the draft say" | the draft read aloud in `scratchpad_voice` |
 | "paste that again" / "copy the last one" | the previous dictation |
 | "never mind", "cancel" | nothing |
 

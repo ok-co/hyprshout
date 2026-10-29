@@ -44,6 +44,7 @@ ACTIONS = {
     'scratchpad_copy': 'Copy the scratchpad draft to the clipboard.',
     'scratchpad_undo': 'Undo the last change to the scratchpad draft.',
     'scratchpad_clear': 'Clear the scratchpad draft and start a new one.',
+    'scratchpad_speak': 'Read the scratchpad draft aloud (read it to me, what does the draft say).',
     'paste_last': 'Paste the previous dictation again.',
     'copy_last': 'Copy the previous dictation to the clipboard.',
     'nothing': 'None of these: unclear, unrelated, or the user cancels or changes their mind.',
@@ -88,7 +89,8 @@ DICTATION_PLANS = {
 }
 
 # Immediate actions named after the scratchpad socket requests they make (app/scratchpad.py)
-SCRATCHPAD_ACTIONS = ('scratchpad_paste', 'scratchpad_copy', 'scratchpad_undo', 'scratchpad_clear')
+SCRATCHPAD_ACTIONS = ('scratchpad_paste', 'scratchpad_copy', 'scratchpad_undo', 'scratchpad_clear',
+                      'scratchpad_speak')
 
 
 def language_name(code: str) -> str:

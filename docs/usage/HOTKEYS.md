@@ -80,12 +80,14 @@ With `external_bindings` on, `translate_shortcut` is ignored like every other sh
 ## Scratchpad shortcuts
 
 One hotkey records dictations into a [scratchpad](SCRATCHPAD.md) draft instead of pasting them; the LLM adds
-each one or applies it as an edit. A second hotkey pastes the finished draft when you release it:
+each one or applies it as an edit. A second hotkey pastes the finished draft when you release it. An optional
+third one [reads the draft aloud](SCRATCHPAD.md#reading-the-draft-aloud), and stops when pressed again:
 
 ```jsonc
 {
     "scratchpad_shortcut": "SUPER+ALT+S",
-    "scratchpad_paste_shortcut": "SUPER+ALT+P"
+    "scratchpad_paste_shortcut": "SUPER+ALT+P",
+    "scratchpad_speak_shortcut": "SUPER+ALT+R"
 }
 ```
 
@@ -200,6 +202,7 @@ recording key works like the translate key, with `--scratchpad` and the `scratch
 ```bash
 bindd = SUPER ALT, S, Speech-to-text (scratchpad), exec, hyprwhspr record toggle --scratchpad
 bindd = SUPER ALT, P, Paste scratchpad, exec, hyprwhspr scratchpad paste
+bindd = SUPER ALT, R, Read scratchpad aloud, exec, hyprwhspr scratchpad speak
 ```
 
 Push-to-talk, and auto when held:

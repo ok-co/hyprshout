@@ -148,8 +148,11 @@ class RecordingMixin:
         # the capture slot occupied (no recording will ever finish for it).
         if blocked is not None:
             self._release_blocked_capture()
-        elif voice_plan is None:
-            self._voice_preempt()
+        else:
+            # The microphone would hear the draft being read aloud
+            self._stop_scratchpad_speech()
+            if voice_plan is None:
+                self._voice_preempt()
 
         # Model is still loading in background
         if blocked in ('initializing', 'init-failed', 'realtime-reconnect'):

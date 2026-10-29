@@ -77,6 +77,21 @@ class FileTranscriptionProtocolTests(unittest.TestCase):
                 handler.assert_called_once_with(verb)
         transcribe.assert_not_called()
 
+    def test_scratchpad_speak_and_voice_pass_the_voice(self):
+        for verb in ('scratchpad_speak', 'scratchpad_voice'):
+            with self.subTest(verb=verb):
+                handler = mock.Mock(return_value=(True, 'done'))
+                response = self._exchange(json.dumps({'verb': verb, 'voice': 'lily'}).encode() + b'\n',
+                                          scratchpad=handler)
+                self.assertEqual(response, {'ok': True, 'message': 'done'})
+                handler.assert_called_once_with(verb, voice='lily')
+        handler = mock.Mock(return_value=(True, 'done'))
+        self._exchange(b'{"verb":"scratchpad_stop"}\n', scratchpad=handler)
+        handler.assert_called_once_with('scratchpad_stop')
+        handler = mock.Mock()
+        self.assertFalse(self._exchange(b'{"verb":"scratchpad_speak","voice":3}\n', scratchpad=handler)['ok'])
+        handler.assert_not_called()
+
     def test_scratchpad_show_returns_the_draft_as_text(self):
         handler = mock.Mock(return_value=(True, 'line one\nline two'))
         response = self._exchange(b'{"verb":"scratchpad_show"}\n', scratchpad=handler)

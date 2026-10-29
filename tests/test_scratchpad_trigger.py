@@ -17,6 +17,9 @@ class ScratchpadConfig(FakeConfig):
     def get_filter_filler_words(self):
         return False
 
+    def set_setting(self, key, value):
+        self.values[key] = value
+
 
 class ScratchpadTriggerTests(unittest.TestCase):
     @classmethod
@@ -196,6 +199,67 @@ class ScratchpadTriggerTests(unittest.TestCase):
         app = self._app()
         app._on_scratchpad_paste_shortcut()
         app._notify_user.assert_called_once_with('hyprwhspr scratchpad', 'The draft is empty')
+
+    # -- reading aloud -----------------------------------------------------
+
+    def _speaker(self, app, speaking=False):
+        app._scratchpad_speech = mock.Mock(speaking=speaking)
+        return app._scratchpad_speech
+
+    def test_speak_reads_the_draft_in_the_configured_voice(self):
+        app = self._app(scratchpad_voice='Bella')
+        speaker = self._speaker(app)
+        app._scratchpad.set('Read me.')
+        self.assertEqual(app._handle_scratchpad_request('scratchpad_speak'),
+                         (True, 'Reading the draft aloud (bella)'))
+        speaker.speak.assert_called_once_with('Read me.', 'bella')
+        speaker.reset_mock()
+        app._handle_scratchpad_request('scratchpad_speak', voice='lily')
+        speaker.speak.assert_called_once_with('Read me.', 'lily')
+
+    def test_speak_again_stops_and_stop_stops(self):
+        app = self._app()
+        speaker = self._speaker(app, speaking=True)
+        app._scratchpad.set('Read me.')
+        self.assertEqual(app._handle_scratchpad_request('scratchpad_speak'),
+                         (True, 'Stopped reading the draft'))
+        speaker.speak.assert_not_called()
+        speaker.stop.return_value = False
+        self.assertEqual(app._handle_scratchpad_request('scratchpad_stop'), (True, 'Not reading the draft'))
+
+    def test_speak_failures_are_reported(self):
+        app = self._app()
+        speaker = self._speaker(app)
+        self.assertEqual(app._handle_scratchpad_request('scratchpad_speak'), (False, 'The draft is empty'))
+        self.assertFalse(app._handle_scratchpad_request('scratchpad_speak', voice='nobody')[0])
+        app._scratchpad.set('Read me.')
+        speaker.speak.side_effect = app_global(self.main.hyprwhsprApp, 'SpeechError')('no audio player found')
+        ok, message = app._handle_scratchpad_request('scratchpad_speak')
+        self.assertFalse(ok)
+        self.assertIn('no audio player found', message)
+        app._on_scratchpad_speak_shortcut()
+        self.assertIn('no audio player found', app._notify_user.call_args[0][1])
+
+    def test_voice_request_changes_the_voice_until_restart(self):
+        app = self._app()
+        self.assertTrue(app._handle_scratchpad_request('scratchpad_voice', voice='George')[0])
+        self.assertEqual(app.config.get_setting('scratchpad_voice'), 'george')
+        self.assertFalse(app._handle_scratchpad_request('scratchpad_voice', voice='nobody')[0])
+        self.assertEqual(app.config.get_setting('scratchpad_voice'), 'george')
+
+    def test_speak_shortcut_is_registered_on_press(self):
+        app = self._app(scratchpad_speak_shortcut='SUPER+ALT+R')
+        app.secondary_shortcuts = app._translate_shortcuts = app._cancel_shortcuts = None
+        app._scratchpad_shortcuts = app._scratchpad_paste_shortcuts = app._scratchpad_speak_shortcuts = None
+        handlers = {}
+
+        def factory(key, on_press, on_release, **kwargs):
+            handlers[key] = (on_press, on_release)
+            return mock.Mock()
+
+        with patch_app_global(self.main.hyprwhsprApp, 'GlobalShortcuts', factory):
+            app._setup_global_shortcuts()
+        self.assertEqual(handlers['SUPER+ALT+R'], (app._on_scratchpad_speak_shortcut, None))
 
     def test_notification_shows_the_end_of_the_draft_escaped(self):
         app = self.main.hyprwhsprApp.__new__(self.main.hyprwhsprApp)
