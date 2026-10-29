@@ -1,5 +1,6 @@
 """
-Text to speech for the scratchpad: the draft read aloud in a chosen voice.
+Text to speech: the scratchpad draft, or a voice assistant reply, read aloud
+in a chosen voice.
 
 The text goes to OpenRouter's speech endpoint (ElevenLabs Eleven v4 Turbo by
 default) with the key stored by 'hyprwhspr config llm', and the MP3 it
@@ -187,8 +188,9 @@ class SpeechPlayer:
     def __init__(self, synthesize: Callable[[str, Optional[str]], bytes],
                  on_error: Optional[Callable[[str], None]] = None,
                  player: Optional[Callable[[], Optional[List[str]]]] = None,
-                 audio_dir: Optional[Path] = None):
+                 audio_dir: Optional[Path] = None, name: str = 'ScratchpadSpeech'):
         self._synthesize = synthesize
+        self._name = name
         self._on_error = on_error
         self._find_player = player or find_player
         self._audio_dir = Path(audio_dir) if audio_dir is not None else RUNTIME_DIR
@@ -214,7 +216,7 @@ class SpeechPlayer:
         with self._lock:
             self._stop = stop = threading.Event()
             self._thread = threading.Thread(target=self._run, args=(parts, voice, command, stop),
-                                            daemon=True, name="ScratchpadSpeech")
+                                            daemon=True, name=self._name)
             self._thread.start()
 
     def stop(self) -> bool:
@@ -232,7 +234,7 @@ class SpeechPlayer:
 
     def _run(self, parts, voice, command, stop):
         # Not a with block: a stop must not wait for a request in flight
-        pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ScratchpadSpeechSynth")
+        pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"{self._name}Synth")
         try:
             upcoming = pool.submit(self._synthesize, parts[0], voice)
             for index in range(len(parts)):

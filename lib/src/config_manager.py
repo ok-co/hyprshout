@@ -144,6 +144,15 @@ def build_default_config():
         'voice_control_decision_timeout': 10,
         'voice_control_min_confidence': 0.5,     # Below this the decision counts as "didn't understand"
         'voice_control_languages': ['en', 'de', 'fr', 'es', 'it', 'pt', 'nl', 'pl'],  # Languages commands can name
+        # Voice assistant (voice_assistant.py): voice commands that ask a
+        # question get an LLM reply on the llm_refine_* provider, read aloud
+        # with scratchpad_speech_model
+        'assistant_model': None,               # Null = llm_refine_model
+        'assistant_prompt': None,              # Replaces the built-in system prompt (a witty Jarvis)
+        'assistant_prompt_file': None,         # Prompt read from a file each question; wins over assistant_prompt
+        'assistant_voice': 'george',           # One of speech_output.VOICES
+        'assistant_timeout': 30,               # Seconds to wait for a reply
+        'assistant_memory_minutes': 5,         # Follow-ups within this many minutes keep the conversation; 0 = none
         'scratchpad_preview': True,            # Show the draft in an overlay panel while drafting (layer-shell compositors)
         'scratchpad_preview_seconds': 8,       # How long the panel stays after a change; 0 = until paste or clear
         'clipboard_behavior': False,  # Boolean: true = clear clipboard after delay, false = keep (current behavior)

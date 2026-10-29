@@ -45,6 +45,10 @@ ACTIONS = {
     'scratchpad_undo': 'Undo the last change to the scratchpad draft.',
     'scratchpad_clear': 'Clear the scratchpad draft and start a new one.',
     'scratchpad_speak': 'Read the scratchpad draft aloud (read it to me, what does the draft say).',
+    'ask': 'Ask the voice assistant a question or give it a request that it answers out loud; the '
+           'command itself is the question (what is, how do I, explain, tell me a joke).',
+    'assistant': 'Call the voice assistant without asking anything yet (I need you, are you there, '
+                 'I have a question): what the user says next is answered out loud.',
     'paste_last': 'Paste the previous dictation again.',
     'copy_last': 'Copy the previous dictation to the clipboard.',
     'nothing': 'None of these: unclear, unrelated, or the user cancels or changes their mind.',
@@ -76,7 +80,7 @@ class VoiceDecision:
 @dataclass(frozen=True)
 class DictationPlan:
     """How one voice-started dictation is delivered."""
-    route: str = 'paste'                      # the recording route: 'paste' | 'translate' | 'scratchpad'
+    route: str = 'paste'                      # the recording route: 'paste' | 'translate' | 'scratchpad' | 'assistant'
     raw: bool = False                         # paste without LLM refinement
     translate_language: Optional[str] = None  # this dictation's target instead of llm_translate_language
 
@@ -86,6 +90,7 @@ DICTATION_PLANS = {
     'dictate_raw': DictationPlan(raw=True),
     'translate': DictationPlan(route='translate'),
     'scratchpad': DictationPlan(route='scratchpad'),
+    'assistant': DictationPlan(route='assistant'),
 }
 
 # Immediate actions named after the scratchpad socket requests they make (app/scratchpad.py)

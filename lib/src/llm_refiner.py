@@ -8,7 +8,8 @@ raises LLMRefineError so the caller can paste the original text instead: a
 broken provider must never eat a dictation.
 
 edit_draft uses the same connection to apply a dictation to a scratchpad
-draft: the model returns the whole updated draft.
+draft: the model returns the whole updated draft. chat_reply serves the
+voice assistant (voice_assistant.py), with earlier turns of the conversation.
 
 Stdlib only (urllib), so core stays importable without the REST extras.
 """
@@ -272,10 +273,23 @@ def edit_draft(draft: str, dictation: str, get_setting: Callable,
     return match.group(1).strip()
 
 
+def chat_reply(system: str, user: str, get_setting: Callable, history=(),
+               credential_lookup: Optional[Callable] = None,
+               opener: Callable = urllib.request.urlopen,
+               model: Optional[str] = None, timeout: Optional[float] = None) -> str:
+    """The model's reply to user after history ((role, text) pairs), or raise LLMRefineError."""
+    data = _chat(system, user, get_setting, credential_lookup, opener, model=model, timeout=timeout,
+                 history=history)
+    content = _message_content(data).strip()
+    if not content:
+        raise LLMRefineError('response was empty')
+    return content
+
+
 def _chat(system: str, user: str, get_setting: Callable,
           credential_lookup: Optional[Callable], opener: Callable,
-          model: Optional[str] = None, timeout: Optional[float] = None):
-    """POST one system + user exchange; return the decoded JSON response."""
+          model: Optional[str] = None, timeout: Optional[float] = None, history=()):
+    """POST one system + user exchange, after any history turns; return the decoded JSON response."""
     target = resolve_target(get_setting)
     if credential_lookup is None:
         try:
@@ -296,6 +310,7 @@ def _chat(system: str, user: str, get_setting: Callable,
         'model': model or target['model'],
         'messages': [
             {'role': 'system', 'content': system},
+            *({'role': role, 'content': text} for role, text in history),
             {'role': 'user', 'content': user},
         ],
     }
