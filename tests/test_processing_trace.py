@@ -46,6 +46,7 @@ class ProcessingTraceTests(unittest.TestCase):
         self.assertEqual(trace["preprocessed"], "Café\n東京")
         self.assertEqual(trace["model"], "parakeet-日本語")
         self.assertTrue(trace["hook_present"])
+        self.assertFalse(trace["llm_refine_enabled"])
         self.assertEqual(trace["onnx_vad_min_duration"], 12.5)
         encoded = json.dumps(trace, ensure_ascii=False)
         self.assertEqual(json.loads(encoded), trace)

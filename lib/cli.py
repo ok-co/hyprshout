@@ -113,6 +113,15 @@ def main():
     config_subparsers.add_parser('edit', help='Open config in editor')
     config_subparsers.add_parser('secondary-shortcut', help='Configure secondary shortcut and its language')
     config_subparsers.add_parser('focused-window', help='Show focused-window identifiers for application rules')
+    config_llm_parser = config_subparsers.add_parser(
+        'llm', help='Refine dictations with an LLM (OpenRouter or OpenAI-compatible) before paste')
+    config_llm_parser.add_argument(
+        'llm_action', nargs='?', default='setup',
+        choices=['setup', 'status', 'test', 'prompt', 'disable', 'forget-key'],
+        help='setup (default): provider, API key, model; status; test [TEXT]; '
+             'prompt: edit your own prompt; disable; forget-key')
+    config_llm_parser.add_argument('text', nargs='?', default=None,
+                                   help='Text for test (default: piped stdin or a sample)')
 
     # waybar command
     waybar_parser = subparsers.add_parser('waybar', help='Waybar integration')
@@ -324,8 +333,12 @@ def main():
             if args.config_action == 'validate':
                 from diagnostics import run_diagnostics
                 sys.exit(run_diagnostics(json_output=args.json_output))
-            from cli.config import config_command
-            config_command(args.config_action, show_all=getattr(args, 'show_all', False))
+            if args.config_action == 'llm':
+                from cli.llm import llm_command
+                llm_command(args.llm_action, args.text)
+            else:
+                from cli.config import config_command
+                config_command(args.config_action, show_all=getattr(args, 'show_all', False))
         elif args.command == 'waybar':
             if not args.waybar_action:
                 waybar_parser.print_help()

@@ -184,4 +184,4 @@ Words land as you speak. Needs a model whose words never change once sent (`appe
 - Typed words stay; at stop, the rest arrives with its punctuation.
 - Enter, the trailing space and the clipboard restore wait for stop.
 - Cancel keeps what's typed.
-- Off with a `post_transcription_hook`, `record capture`, continuous or long-form. `hyprwhspr config validate` says why.
+- Off with a `post_transcription_hook`, [LLM refinement](../usage/LLM_REFINEMENT.md), `record capture`, continuous or long-form. `hyprwhspr config validate` says why.
