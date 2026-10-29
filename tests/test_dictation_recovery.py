@@ -57,6 +57,43 @@ class DictationRecoveryTests(unittest.TestCase):
             fresh.inject_text('secret passphrase')
         self.assertFalse(fresh.recover_last('copy_last')[0])
 
+    def test_prepared_text_is_delivered_as_is_and_retained(self):
+        injector = make_injector()
+        injector.config_manager = ConfigStub({'post_transcription_hook': 'false', 'auto_submit': True})
+        with mock.patch.object(injector, '_inject_via_clipboard_and_hotkey', return_value=True) as paste, \
+                mock.patch.object(injector, '_run_post_transcription_hook') as hook:
+            self.assertEqual(injector.deliver_prepared('line one\nline two', 'paste'), (True, 'Paste dispatched'))
+        paste.assert_called_once_with('line one\nline two', auto_submit=False, retain=True, clipboard_only=True)
+        hook.assert_not_called()
+        with mock.patch.object(injector, '_copy_text_to_clipboard', return_value=True) as copy:
+            self.assertTrue(injector.deliver_prepared('draft', 'copy')[0])
+        copy.assert_called_once_with('draft')
+        self.assertFalse(injector.deliver_prepared('draft', 'type')[0])
+        injector.retain_text('kept')
+        self.assertEqual(injector._last_text, 'kept')
+
+    def test_prepared_delivery_refuses_while_another_delivery_runs(self):
+        injector = make_injector()
+        held, release = threading.Event(), threading.Event()
+
+        def hold():
+            with injector._delivery_lock:
+                held.set()
+                release.wait(2)
+
+        holder = threading.Thread(target=hold)
+        holder.start()
+        self.assertTrue(held.wait(2))
+        try:
+            with mock.patch.object(injector, '_inject_via_clipboard_and_hotkey') as paste:
+                ok, message = injector.deliver_prepared('draft', 'paste')
+        finally:
+            release.set()
+            holder.join(2)
+        self.assertFalse(ok)
+        self.assertIn('busy', message)
+        paste.assert_not_called()
+
     def test_failed_writes_and_prewrite_exceptions_preserve_pending_restore(self):
         for failure in ('native-and-fallback', 'prewrite', 'copy-last'):
             with self.subTest(failure=failure):

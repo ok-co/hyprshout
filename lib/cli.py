@@ -122,8 +122,11 @@ def main():
              'prompt: edit your own prompt; disable; forget-key')
     config_llm_parser.add_argument('text', nargs='?', default=None,
                                    help='Text for test (default: piped stdin or a sample)')
-    config_llm_parser.add_argument('--translate', action='store_true',
-                                   help='With test: also translate into llm_translate_language')
+    config_llm_test_mode = config_llm_parser.add_mutually_exclusive_group()
+    config_llm_test_mode.add_argument('--translate', action='store_true',
+                                      help='With test: also translate into llm_translate_language')
+    config_llm_test_mode.add_argument('--scratchpad', action='store_true',
+                                      help='With test: apply TEXT to a copy of the scratchpad draft')
 
     # waybar command
     waybar_parser = subparsers.add_parser('waybar', help='Waybar integration')
@@ -206,16 +209,22 @@ def main():
     record_start_parser = record_subparsers.add_parser('start', help='Start recording')
     record_start_parser.add_argument('--lang', dest='language', metavar='CODE',
                                      help='Language code for transcription (e.g., en, it, de)')
-    record_start_parser.add_argument('--translate', action='store_true',
-                                     help='Translate the dictation with the LLM (llm_translate_language)')
+    record_start_route = record_start_parser.add_mutually_exclusive_group()
+    record_start_route.add_argument('--translate', action='store_true',
+                                    help='Translate the dictation with the LLM (llm_translate_language)')
+    record_start_route.add_argument('--scratchpad', action='store_true',
+                                    help='Apply the dictation to the scratchpad draft instead of pasting it')
     record_subparsers.add_parser('stop', help='Stop recording')
     record_subparsers.add_parser('release', help='Key-up for push-to-talk bindings: stop, or latch a long hold')
     record_subparsers.add_parser('cancel', help='Cancel recording and discard audio')
     record_toggle_parser = record_subparsers.add_parser('toggle', help='Toggle recording on/off')
     record_toggle_parser.add_argument('--lang', dest='language', metavar='CODE',
                                       help='Language code for transcription (e.g., en, it, de)')
-    record_toggle_parser.add_argument('--translate', action='store_true',
-                                      help='Translate the dictation with the LLM (llm_translate_language)')
+    record_toggle_route = record_toggle_parser.add_mutually_exclusive_group()
+    record_toggle_route.add_argument('--translate', action='store_true',
+                                     help='Translate the dictation with the LLM (llm_translate_language)')
+    record_toggle_route.add_argument('--scratchpad', action='store_true',
+                                     help='Apply the dictation to the scratchpad draft instead of pasting it')
     record_capture_parser = record_subparsers.add_parser(
         'capture',
         help='Trigger recording and stream the transcription to stdout (suppresses text injection)'
@@ -230,6 +239,15 @@ def main():
     record_subparsers.add_parser('copy-last', help='Copy the last dictation to the clipboard')
     record_subparsers.add_parser('paste-last', help='Paste the last dictation without auto-submit')
     record_subparsers.add_parser('clear-last', help='Forget the last dictation retained in memory')
+
+    # scratchpad command
+    scratchpad_parser = subparsers.add_parser(
+        'scratchpad', help='Draft text over several dictations, then paste it')
+    scratchpad_parser.add_argument(
+        'scratchpad_action', nargs='?', default='show',
+        choices=['show', 'paste', 'copy', 'clear', 'undo', 'edit', 'status'],
+        help='show (default): print the draft; paste: into the focused app; copy: to the clipboard; '
+             'clear; undo: the last change; edit: in $EDITOR; status')
     
     # backend command
     backend_parser = subparsers.add_parser('backend', help='Backend management')
@@ -341,7 +359,8 @@ def main():
                 sys.exit(run_diagnostics(json_output=args.json_output))
             if args.config_action == 'llm':
                 from cli.llm import llm_command
-                llm_command(args.llm_action, args.text, translate=getattr(args, 'translate', False))
+                llm_command(args.llm_action, args.text, translate=getattr(args, 'translate', False),
+                            scratchpad=getattr(args, 'scratchpad', False))
             else:
                 from cli.config import config_command
                 config_command(args.config_action, show_all=getattr(args, 'show_all', False))
@@ -444,7 +463,11 @@ def main():
                 )
             else:
                 record_command(args.record_action, language=getattr(args, 'language', None),
-                               translate=getattr(args, 'translate', False))
+                               translate=getattr(args, 'translate', False),
+                               scratchpad=getattr(args, 'scratchpad', False))
+        elif args.command == 'scratchpad':
+            from cli.scratchpad import scratchpad_command
+            scratchpad_command(args.scratchpad_action)
         elif args.command == 'uninstall':
             from cli.uninstall import uninstall_command
             uninstall_command(

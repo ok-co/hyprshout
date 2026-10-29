@@ -141,8 +141,13 @@ def validate_config(path=None):
                     and protocol is not None and protocol.per_recording_session):
                 findings.append(finding('config.realtime_continuous', 'error',
                                         f'{protocol.id} streams one recording at a time; use toggle, push_to_talk or auto.'))
-    if config['llm_refine_enabled'] is True or config['translate_shortcut']:
-        feature = 'LLM refinement' if config['llm_refine_enabled'] is True else 'LLM translation (translate_shortcut)'
+    if config['llm_refine_enabled'] is True or config['translate_shortcut'] or config['scratchpad_shortcut']:
+        if config['llm_refine_enabled'] is True:
+            feature = 'LLM refinement'
+        elif config['translate_shortcut']:
+            feature = 'LLM translation (translate_shortcut)'
+        else:
+            feature = 'The scratchpad (scratchpad_shortcut)'
         try:
             target = resolve_llm_target(lambda key, default=None: config.get(key, default))
         except LLMRefineError:

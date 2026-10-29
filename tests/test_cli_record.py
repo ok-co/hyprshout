@@ -67,5 +67,15 @@ class RecordCommandTests(unittest.TestCase):
                 if kwargs.get("translate"):
                     self.assertIn("translate", success.call_args[0][0])
 
+    def test_scratchpad_sends_a_scratchpad_start(self):
+        for action, kwargs, expected in (
+            ("start", {"scratchpad": True}, "scratchpad\n"),
+            ("toggle", {"scratchpad": True, "language": "de"}, "scratchpad:de\n"),
+        ):
+            with self.subTest(action=action, kwargs=kwargs):
+                sent, success, _ = self.run_action(action, "false", **kwargs)
+                self.assertEqual(sent, expected)
+                self.assertIn("scratchpad", success.call_args[0][0])
+
 if __name__ == "__main__":
     unittest.main()

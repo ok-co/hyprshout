@@ -20,7 +20,7 @@ except ImportError:
     from output_control import log_info, log_success, log_error
 
 
-def record_command(action: str, language: str = None, translate: bool = False):
+def record_command(action: str, language: str = None, translate: bool = False, scratchpad: bool = False):
     """
     Control recording via CLI - useful when keyboard grab is not possible.
 
@@ -34,6 +34,7 @@ def record_command(action: str, language: str = None, translate: bool = False):
         action: The action to perform (start, stop, release, cancel, toggle, status)
         language: Optional language code for transcription (e.g., 'en', 'it', 'de')
         translate: Start a recording the LLM translates (start and toggle)
+        scratchpad: Start a recording the LLM applies to the scratchpad draft (start and toggle)
     """
     import stat
 
@@ -98,11 +99,11 @@ def record_command(action: str, language: str = None, translate: bool = False):
             return False
 
     # Build start command with optional language
-    start_verb = 'translate' if translate else 'start'
+    start_verb = 'scratchpad' if scratchpad else 'translate' if translate else 'start'
     start_cmd = f'{start_verb}:{language}' if language else start_verb
     details = [f"language: {language}"] if language else []
-    if translate:
-        details.append("translate")
+    if start_verb != 'start':
+        details.append(start_verb)
     started_msg = f"Recording started ({', '.join(details)})" if details else "Recording started"
 
     # The status file lags the daemon, so it never gates these; the daemon

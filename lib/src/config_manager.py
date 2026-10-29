@@ -54,6 +54,8 @@ def build_default_config():
         'secondary_shortcut': None,  # Optional secondary hotkey for language-specific recording (e.g., "SUPER+ALT+I")
         'secondary_language': None,  # Language code for secondary shortcut (e.g., "it", "en", "fr", etc.)
         'translate_shortcut': None,  # Optional hotkey that records and has the LLM translate the dictation (e.g., "SUPER+ALT+T")
+        'scratchpad_shortcut': None,  # Optional hotkey that records a dictation the LLM applies to the scratchpad draft (e.g., "SUPER+ALT+S")
+        'scratchpad_paste_shortcut': None,  # Optional hotkey that pastes the scratchpad draft (e.g., "SUPER+ALT+P")
         'cancel_shortcut': None,  # Optional shortcut to cancel recording and discard audio (e.g., "SUPER+ESCAPE")
         'recording_mode': 'toggle',  # 'toggle' | 'push_to_talk' | 'auto' | 'continuous' (auto-paste on silence)
         'continuous_silence_seconds': 2.0,  # Seconds of silence before auto-pasting in continuous mode
@@ -117,6 +119,9 @@ def build_default_config():
         'llm_refine_temperature': None,        # Null = provider default
         'llm_refine_timeout': 15,              # Seconds; the original text is pasted on timeout
         'llm_translate_language': 'English',   # Target of translate_shortcut / record start --translate
+        'scratchpad_model': None,              # Scratchpad edits; null = llm_refine_model
+        'scratchpad_timeout': 30,              # Seconds per scratchpad edit; the draft is kept on timeout
+        'scratchpad_clear_on_paste': True,     # Empty the draft once it is pasted (scratchpad undo restores it)
         'clipboard_behavior': False,  # Boolean: true = clear clipboard after delay, false = keep (current behavior)
         'clipboard_clear_delay': 5.0,  # Float: seconds to wait before clearing clipboard (only used if clipboard_behavior is true)
         'clipboard_settle_delay': 0.15,  # Seconds between clipboard copy and paste shortcut

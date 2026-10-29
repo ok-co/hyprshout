@@ -77,6 +77,21 @@ It needs an LLM provider set up with `hyprwhspr config llm`. See [Translation](L
 With `external_bindings` on, `translate_shortcut` is ignored like every other shortcut setting; bind a
 [translate key in your compositor](#translate-key) instead.
 
+## Scratchpad shortcuts
+
+One hotkey records dictations into a [scratchpad](SCRATCHPAD.md) draft instead of pasting them; the LLM adds
+each one or applies it as an edit. A second hotkey pastes the finished draft when you release it:
+
+```jsonc
+{
+    "scratchpad_shortcut": "SUPER+ALT+S",
+    "scratchpad_paste_shortcut": "SUPER+ALT+P"
+}
+```
+
+Like translation, it needs an LLM provider set up with `hyprwhspr config llm`. With `external_bindings` on, bind
+the [scratchpad keys in your compositor](#scratchpad-keys) instead.
+
 ## Cancel shortcut
 
 Bail out of an accidental recording — discards the audio and plays the error sound:
@@ -177,6 +192,27 @@ hl.bind("SUPER + ALT + T", hl.dsp.exec_cmd("hyprwhspr record toggle --translate"
 - Combine with a language: `hyprwhspr record start --translate --lang it`, or write `translate:it` to the FIFO
 - A daemon from before this feature ignores `translate`; restart the service after updating
 
+### Scratchpad keys
+
+A key whose recordings go into the [scratchpad](SCRATCHPAD.md) draft, and a key that pastes the draft. The
+recording key works like the translate key, with `--scratchpad` and the `scratchpad` FIFO verb:
+
+```bash
+bindd = SUPER ALT, S, Speech-to-text (scratchpad), exec, hyprwhspr record toggle --scratchpad
+bindd = SUPER ALT, P, Paste scratchpad, exec, hyprwhspr scratchpad paste
+```
+
+Push-to-talk, and auto when held:
+
+```bash
+bind = SUPER ALT, S, exec, echo "scratchpad" > "$XDG_RUNTIME_DIR/hyprwhspr/recording_control"
+bindr = SUPER ALT, S, exec, echo "release" > "$XDG_RUNTIME_DIR/hyprwhspr/recording_control"
+```
+
+The draft is pasted into the app that has focus when the binding runs, so bind the paste key rather than running
+the command from a terminal. `bindr` makes it paste on release, after you've let go of the modifiers:
+`bindr = SUPER ALT, P, exec, hyprwhspr scratchpad paste`.
+
 ### Cancel recording (all modes)
 
 Discard audio without transcribing:
@@ -200,6 +236,7 @@ Bind [`hyprwhspr record`](CLI.md#recording) in KDE, GNOME, sxhkd, Espanso or any
 # English: hyprwhspr record toggle
 # Italian: hyprwhspr record start --lang it
 # Translate: hyprwhspr record toggle --translate
+# Scratchpad: hyprwhspr record toggle --scratchpad, then hyprwhspr scratchpad paste
 # Cancel:  hyprwhspr record cancel
 
 # Example: Hyprland config

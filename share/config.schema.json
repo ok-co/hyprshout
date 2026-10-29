@@ -53,6 +53,16 @@
       "default": null,
       "description": "Optional hotkey that records like primary_shortcut and has the LLM translate the dictation into llm_translate_language before paste (e.g., 'SUPER+ALT+T'). Uses the llm_refine_* provider settings, whether or not llm_refine_enabled is on."
     },
+    "scratchpad_shortcut": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Optional hotkey that records like primary_shortcut and has the LLM apply the dictation to the scratchpad draft instead of pasting it: new text is added, an instruction about the draft ('change X to Y', 'drop the last point') edits it (e.g., 'SUPER+ALT+S'). Uses the llm_refine_* provider settings, whether or not llm_refine_enabled is on."
+    },
+    "scratchpad_paste_shortcut": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Optional hotkey that pastes the scratchpad draft into the focused app when released, without auto-submit (e.g., 'SUPER+ALT+P')."
+    },
     "cancel_shortcut": {
       "type": ["string", "null"],
       "default": null,
@@ -276,6 +286,23 @@
       "minLength": 1,
       "default": "English",
       "description": "Language the LLM translates into for translate_shortcut and 'hyprwhspr record start/toggle --translate', given as a name or code (e.g. 'English', 'German', 'pt-BR'). Other dictations are not translated."
+    },
+    "scratchpad_model": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Model for scratchpad edits, on the llm_refine_* provider. Null = llm_refine_model (or the provider default)."
+    },
+    "scratchpad_timeout": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 300,
+      "default": 30,
+      "description": "Seconds to wait for one scratchpad edit. The LLM rewrites the whole draft, so this is longer than llm_refine_timeout. On timeout or any error the draft is kept unchanged."
+    },
+    "scratchpad_clear_on_paste": {
+      "type": "boolean",
+      "default": true,
+      "description": "Empty the scratchpad draft once it is pasted. 'hyprwhspr scratchpad undo' restores it."
     },
     "clipboard_behavior": {
       "type": "boolean",

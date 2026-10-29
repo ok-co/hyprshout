@@ -1703,6 +1703,36 @@ except Exception:
         finally:
             self._delivery_lock.release()
 
+    def deliver_prepared(self, text, action):
+        """Paste or copy finished text (the scratchpad draft) exactly as given.
+
+        No preprocessing, LLM pass, hook or auto-submit Enter: the text is
+        already final, and a prompt is reviewed in the target before it is
+        sent. A paste is retained for copy-last/paste-last like a dictation.
+        """
+        if action not in ('copy', 'paste'):
+            return False, 'Unknown delivery action'
+        if self.stream_busy() or not self._delivery_lock.acquire(blocking=False):
+            return False, 'Text delivery is busy; try again when it finishes'
+        try:
+            if self.stream_busy():
+                return False, 'Text delivery is busy; try again when it finishes'
+            if action == 'copy':
+                ok = self._copy_text_to_clipboard(text)
+                return ok, ('Copied' if ok else 'Could not copy to the clipboard')
+            ok = self._inject_via_clipboard_and_hotkey(text, auto_submit=False, retain=True,
+                                                       clipboard_only=True)
+            return ok, ('Paste dispatched' if ok else 'Could not paste; try hyprwhspr record copy-last')
+        except Exception:
+            return False, 'Could not deliver the text; check clipboard and paste tools'
+        finally:
+            self._delivery_lock.release()
+
+    def retain_text(self, text):
+        """Keep text for copy-last/paste-last without delivering it."""
+        with self._last_text_lock:
+            self._last_text = text
+
     def _prepare_and_inject_text(self, text: str, translate: bool = False) -> InjectionOutcome:
         """
         Inject text into the currently focused application
@@ -1845,9 +1875,13 @@ except Exception:
 
     def _inject_via_clipboard_and_hotkey(
         self, text: str, auto_submit: bool = True, retain: bool = False,
-        stream: Optional[_StreamSession] = None,
+        stream: Optional[_StreamSession] = None, clipboard_only: bool = False,
     ) -> bool:
-        """Copy text to clipboard, then trigger the compositor-native paste path."""
+        """Copy text to clipboard, then trigger the compositor-native paste path.
+
+        clipboard_only skips GNOME's direct typing, which types a line break
+        as Enter and would submit a multi-line text in a chat field.
+        """
         try:
             window_lookup_needed = self._active_window_lookup_needed()
             window_info = (
@@ -1897,6 +1931,7 @@ except Exception:
                 and self.ydotool_available
                 and app_match is None
                 and not self._has_custom_paste_keycode()
+                and not clipboard_only
                 and not self._force_clipboard_paste()
                 and text.isascii()
                 and self._layout_is_type_safe()

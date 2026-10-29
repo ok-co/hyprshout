@@ -32,22 +32,22 @@ class TranslateTriggerTests(unittest.TestCase):
             app._handle_control_command('translate', 'it')
             app._handle_control_command('start')
         self.assertEqual(app._start_recording.call_args_list, [
-            mock.call(language_override='it', translate=True),
-            mock.call(language_override=None, translate=False),
+            mock.call(language_override='it', route='translate'),
+            mock.call(language_override=None, route='paste'),
         ])
 
     def test_control_translate_in_long_form_starts_a_translated_session(self):
         app = self._app(recording_mode='long_form')
         app._handle_control_command('translate')
-        app._longform.request_start.assert_called_once_with(language_override=None, translate=True)
+        app._longform.request_start.assert_called_once_with(language_override=None, route='translate')
 
     def test_translate_shortcut_starts_translated_and_primary_does_not(self):
         app = self._app()
         app._on_translate_shortcut_triggered()
         app._on_shortcut_triggered()
         self.assertEqual(app._start_recording.call_args_list, [
-            mock.call(language_override=None, translate=True),
-            mock.call(language_override=None, translate=False),
+            mock.call(language_override=None, route='translate'),
+            mock.call(language_override=None, route='paste'),
         ])
 
     def test_translate_shortcut_is_registered_per_recording_mode(self):
@@ -86,12 +86,12 @@ class TranslateTriggerTests(unittest.TestCase):
         self.assertIsNone(app._translate_shortcuts)
         self.assertEqual(factory.call_count, 1)  # the primary shortcut only
 
-    def test_continuous_flush_keeps_the_sessions_translate_flag(self):
+    def test_continuous_flush_keeps_the_sessions_route(self):
         app = self.main.hyprwhsprApp.__new__(self.main.hyprwhsprApp)
         app._recording_lock = threading.Lock()
         app._recording_session = session = object()
         app._current_language_override = None
-        app._current_translate = True
+        app._current_route = 'translate'
         app.is_recording = True
         app._continuous_flush_lock = threading.Lock()
         app._continuous_transcription_done = threading.Event()
@@ -108,7 +108,7 @@ class TranslateTriggerTests(unittest.TestCase):
         with patch_app_global(self.main.hyprwhsprApp, 'log', mock.Mock()):
             app._continuous_flush_audio(session)
             self.assertTrue(app._continuous_transcription_done.wait(timeout=2))
-        app._inject_text.assert_called_once_with('ciao', translate=True)
+        app._inject_text.assert_called_once_with('ciao', route='translate')
 
 
 if __name__ == '__main__':

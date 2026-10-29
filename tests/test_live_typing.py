@@ -662,7 +662,7 @@ class RecordingLifecycleTests(unittest.TestCase):
         app._recording_lock = threading.Lock()
         app.is_processing = False
         app._current_language_override = None
-        app._current_translate = False
+        app._current_route = 'paste'
         app.audio_capture = types.SimpleNamespace(sample_rate=16000, abort_recovery=mock.Mock())
         app.audio_manager = mock.Mock()
         app._recording_control_server = mock.Mock()
@@ -689,10 +689,10 @@ class RecordingLifecycleTests(unittest.TestCase):
 
     def test_translated_recording_skips_live_typing_and_translates_the_paste(self):
         app = self._app(transcript="ciao a tutti")
-        app._current_translate = True
+        app._current_route = 'translate'
         self.assertFalse(app._live_typing_eligible())
         app._process_audio([0.0])
-        app._inject_text.assert_called_once_with("ciao a tutti", translate=True)
+        app._inject_text.assert_called_once_with("ciao a tutti", route='translate')
 
     def test_typed_live_finishes_without_a_second_paste(self):
         app = self._app(transcript="hello there friend")

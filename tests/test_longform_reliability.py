@@ -105,19 +105,19 @@ class LongformReliabilityTests(unittest.TestCase):
     def test_translated_session_is_translated_on_submit_then_reset(self):
         controller, _ = self._controller(timer_factory=mock.Mock())
         controller.state = 'IDLE'
-        controller.primary_shortcut(translate=True)
-        self.assertTrue(controller.translate)
+        controller.primary_shortcut(route='translate')
+        self.assertEqual(controller.route, 'translate')
 
         controller.submit()
-        controller.inject_text.assert_called_once_with("hello", translate=True)
+        controller.inject_text.assert_called_once_with("hello", route='translate')
         self.assertEqual(controller.state, 'IDLE')
-        self.assertFalse(controller.translate)
+        self.assertEqual(controller.route, 'paste')
 
     def test_external_translate_start_reaches_the_session(self):
         controller, _ = self._controller(timer_factory=mock.Mock())
         controller.state = 'IDLE'
-        controller.request_start(language_override="it", translate=True)
-        self.assertEqual((controller.language_override, controller.translate), ("it", True))
+        controller.request_start(language_override="it", route='translate')
+        self.assertEqual((controller.language_override, controller.route), ("it", 'translate'))
 
     def test_start_is_refused_while_the_backend_is_claimed_elsewhere(self):
         controller, _ = self._controller(timer_factory=mock.Mock())
