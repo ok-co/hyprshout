@@ -435,6 +435,19 @@ class LlmCliTests(unittest.TestCase):
         self.assertTrue(refine.call_args.kwargs["translate"])
         self.assertIn("Output: Hello.", out.getvalue())
 
+    def test_scratchpad_test_edits_a_copy_of_the_draft(self):
+        config = self.config()
+        with tempfile.TemporaryDirectory() as tmp:
+            pad = llm.Scratchpad(Path(tmp) / "scratchpad.md")
+            pad.set("Fix the parser.")
+            with mock.patch.object(llm, "edit_draft", return_value="Fix the parser. Add tests.") as edit, \
+                    mock.patch.object(llm, "log_info"), \
+                    mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+                self.assertTrue(llm.test_scratchpad_edit("add tests", config, scratchpad=pad))
+            self.assertEqual(pad.read(), "Fix the parser.")
+        edit.assert_called_once_with("Fix the parser.", "add tests", config.get_setting)
+        self.assertIn("Result:    Fix the parser. Add tests.", out.getvalue())
+
     def test_forget_key_deletes_the_configured_providers_credential(self):
         config = self.config(llm_refine_provider="custom")
         with mock.patch.object(llm, "ConfigManager", return_value=config), \
