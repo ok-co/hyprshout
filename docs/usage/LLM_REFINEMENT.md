@@ -140,6 +140,11 @@ hyprwhspr config llm test --translate "allora, ci vediamo martedì, anzi no, mer
 This differs from Whisper's [`task: translate`](../backends/LANGUAGE.md#translation), which only targets English,
 only works with the Whisper backends, and applies to every dictation.
 
+## Scratchpad
+
+For text you write in several passes, the [scratchpad](SCRATCHPAD.md) uses the same connection to build a draft
+from many dictations, edits included, and pastes it when you ask.
+
 ## Order and failures
 
 Refinement runs after [word overrides, filler filtering and symbol replacements](TEXT_PROCESSING.md), and before the
