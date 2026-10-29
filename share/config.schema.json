@@ -63,6 +63,11 @@
       "default": null,
       "description": "Optional hotkey that pastes the scratchpad draft into the focused app when released, without auto-submit (e.g., 'SUPER+ALT+P')."
     },
+    "scratchpad_speak_shortcut": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Optional hotkey that reads the scratchpad draft aloud in scratchpad_voice; pressed again while reading, it stops (e.g., 'SUPER+ALT+R'). Needs an OpenRouter API key ('hyprwhspr config llm') and mpv, ffplay, pw-play or paplay."
+    },
     "cancel_shortcut": {
       "type": ["string", "null"],
       "default": null,
@@ -303,6 +308,100 @@
       "type": "boolean",
       "default": true,
       "description": "Empty the scratchpad draft once it is pasted. 'hyprwhspr scratchpad undo' restores it."
+    },
+    "scratchpad_voice": {
+      "type": "string",
+      "enum": ["george", "sarah", "adam", "alice", "bella", "bill", "brian", "callum", "charlie", "chris", "daniel", "eric", "harry", "jessica", "laura", "liam", "lily", "matilda", "river", "roger", "will"],
+      "default": "sarah",
+      "description": "Voice the scratchpad draft is read aloud in ('hyprwhspr scratchpad speak', scratchpad_speak_shortcut, or the voice command). 'hyprwhspr scratchpad voice NAME' sets it."
+    },
+    "scratchpad_speech_model": {
+      "type": "string",
+      "minLength": 1,
+      "default": "elevenlabs/eleven-v4-turbo",
+      "description": "OpenRouter text-to-speech model that reads the scratchpad draft aloud, through https://openrouter.ai/api/v1/audio/speech."
+    },
+    "scratchpad_speech_timeout": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 300,
+      "default": 30,
+      "description": "Seconds to wait for OpenRouter to synthesize one part of the scratchpad draft. A long draft is read in parts of about 1500 characters."
+    },
+    "voice_control_enabled": {
+      "type": "boolean",
+      "default": false,
+      "description": "Hands-free control by voice. The start word opens a quiet command session, the end word closes it, and a decision model picks what happens next: a dictation (pasted, raw, translated, or applied to the scratchpad draft), a scratchpad operation (paste, copy, undo, clear, read aloud) or paste/copy of the last dictation. The end word also stops any running recording. Needs openWakeWord in the service's Python, an OpenRouter API key ('hyprwhspr config llm'), PipeWire or PulseAudio, and a local or REST backend; not available in long_form mode."
+    },
+    "voice_control_start_word": {
+      "type": "string",
+      "minLength": 1,
+      "default": "hey_jarvis",
+      "description": "Wake word that opens a voice command: an openWakeWord model name (alexa, hey_jarvis, hey_mycroft, hey_rhasspy) or a path to a custom .onnx model. Pretrained models download on first use."
+    },
+    "voice_control_end_word": {
+      "type": "string",
+      "minLength": 1,
+      "default": "hey_mycroft",
+      "description": "Wake word that ends a voice command or any recording; must differ from voice_control_start_word. Model name or .onnx path."
+    },
+    "voice_control_threshold": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 1,
+      "default": 0.5,
+      "description": "Wake word score that counts as heard. Raise it if words fire by accident; lower it if they are missed."
+    },
+    "voice_control_end_trim_seconds": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 5,
+      "default": 1.0,
+      "description": "Seconds of audio cut from the end of a command or recording the end word closed, so the word itself is not transcribed. A remnant left in the text is stripped too."
+    },
+    "voice_control_max_command_seconds": {
+      "type": "number",
+      "minimum": 1,
+      "maximum": 120,
+      "default": 15,
+      "description": "A voice command still open after this many seconds is dropped."
+    },
+    "voice_control_cues": {
+      "type": "boolean",
+      "default": true,
+      "description": "Play quiet pings when a voice command opens and closes. Follows audio_feedback."
+    },
+    "voice_control_decision_model": {
+      "type": "string",
+      "minLength": 1,
+      "default": "typesafe/jev-1.14",
+      "description": "Decision model on OpenRouter's Decisions API that turns a command into an action, e.g. typesafe/jev-1.14, perplexity/pplx-decider-flash-v1.2, liquid/d1.1. Confidence scales differ between models; retune voice_control_min_confidence after switching."
+    },
+    "voice_control_decision_endpoint": {
+      "type": "string",
+      "minLength": 1,
+      "default": "https://openrouter.ai/api/alpha/decisions",
+      "description": "Decisions API URL. It receives the OpenRouter API key; plain http is refused except to localhost."
+    },
+    "voice_control_decision_timeout": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 120,
+      "default": 10,
+      "description": "Seconds to wait for the decision model."
+    },
+    "voice_control_min_confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.5,
+      "description": "Decisions less confident than this count as not understood; language picks below it fall back to automatic detection or llm_translate_language."
+    },
+    "voice_control_languages": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "default": ["en", "de", "fr", "es", "it", "pt", "nl", "pl"],
+      "description": "Language codes a command can name, as the language to dictate in or to translate into. Empty: commands never set a language."
     },
     "scratchpad_preview": {
       "type": "boolean",

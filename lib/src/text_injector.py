@@ -1501,18 +1501,21 @@ except Exception:
             if self._stream is session:
                 self._stream = None
 
-    def inject_text(self, text: str, translate: bool = False) -> InjectionOutcome:
+    def inject_text(self, text: str, translate: bool = False, raw: bool = False,
+                    translate_language: Optional[str] = None) -> InjectionOutcome:
         """Prepare, retain and deliver one dictation at a time.
 
-        translate=True sends it through the LLM to llm_translate_language,
-        whether or not llm_refine_enabled is on.
+        translate=True sends it through the LLM to llm_translate_language
+        (or translate_language), whether or not llm_refine_enabled is on.
+        raw=True skips the LLM refinement of an untranslated dictation.
         """
         if self.stream_busy():
             return InjectionOutcome.FAILED
         with self._delivery_lock:
             if self.stream_busy():
                 return InjectionOutcome.FAILED
-            return self._prepare_and_inject_text(text, translate=translate)
+            return self._prepare_and_inject_text(
+                text, translate=translate, raw=raw, translate_language=translate_language)
 
     def inject_stream_chunk(self, session: _StreamSession, text: str, final: bool = False) -> InjectionOutcome:
         """Deliver one chunk of a dictation typed while recording.
@@ -1733,13 +1736,16 @@ except Exception:
         with self._last_text_lock:
             self._last_text = text
 
-    def _prepare_and_inject_text(self, text: str, translate: bool = False) -> InjectionOutcome:
+    def _prepare_and_inject_text(self, text: str, translate: bool = False, raw: bool = False,
+                                 translate_language: Optional[str] = None) -> InjectionOutcome:
         """
         Inject text into the currently focused application
 
         Args:
             text: Text to inject
             translate: Translate it with the LLM before the hook and paste
+            raw: Skip LLM refinement (a translation still runs)
+            translate_language: Target for this dictation instead of llm_translate_language
 
         Returns:
             InjectionOutcome.INJECTED if pasted, CONSUMED if a post-transcription
@@ -1757,7 +1763,9 @@ except Exception:
         if not processed_text.strip():
             log("No text to inject (empty after preprocessing)")
             return InjectionOutcome.INJECTED
-        processed_text = self._refine_with_llm(processed_text, translate=translate)
+        if translate or not raw:
+            processed_text = self._refine_with_llm(processed_text, translate=translate,
+                                                   translate_language=translate_language)
         hook_result = self._run_post_transcription_hook(processed_text)
         if hook_result.outcome == _PostTranscriptionHookOutcome.CONSUME:
             return InjectionOutcome.CONSUMED
@@ -1803,16 +1811,23 @@ except Exception:
         """
         return preprocess_text(text, self.config_manager)
 
-    def _refine_with_llm(self, text: str, translate: bool = False) -> str:
+    def _refine_with_llm(self, text: str, translate: bool = False,
+                         translate_language: Optional[str] = None) -> str:
         """Rewrite the dictation with the configured LLM (llm_refine_*).
 
         translate=True runs the pass even with llm_refine_enabled off, and
-        translates into llm_translate_language. Any failure keeps the original
-        text; the log carries the reason, never the dictation itself.
+        translates into llm_translate_language, or translate_language when
+        given. Any failure keeps the original text; the log carries the
+        reason, never the dictation itself.
         """
         if not (self.config_manager and text):
             return text
         get_setting = self.config_manager.get_setting
+        if translate and translate_language:
+            configured = get_setting
+
+            def get_setting(key, default=None):
+                return translate_language if key == 'llm_translate_language' else configured(key, default)
         if not (translate or llm_refiner.is_enabled(get_setting)):
             return text
         action = 'Translation' if translate else 'Refinement'

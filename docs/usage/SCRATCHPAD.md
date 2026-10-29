@@ -15,7 +15,7 @@ the current draft. The LLM works out what you meant:
   not an instruction to the LLM. Only a dictation about the draft itself edits it
 
 Nothing is pasted while you draft. A [preview panel](#preview-panel) shows the draft as it grows, with the last
-change highlighted.
+change highlighted, and you can have the whole draft [read aloud](#reading-the-draft-aloud) in a voice you choose.
 
 ## Setup
 
@@ -88,7 +88,10 @@ hyprwhspr scratchpad copy              # copy it to the clipboard
 hyprwhspr scratchpad undo              # undo the last change: an edit, a paste's clear, or a clear
 hyprwhspr scratchpad clear             # start a new draft
 hyprwhspr scratchpad edit              # open the draft in $EDITOR
-hyprwhspr scratchpad status            # size, keys and model
+hyprwhspr scratchpad speak             # read the draft aloud; run it again to stop
+hyprwhspr scratchpad stop              # stop reading
+hyprwhspr scratchpad voice             # list the voices; scratchpad voice NAME picks one
+hyprwhspr scratchpad status            # size, keys, model and voice
 ```
 
 - **Typing and talking mix.** The draft is re-read before every change, so you can fix a word in
@@ -106,6 +109,33 @@ Try the scratchpad prompt against your current draft, without changing it:
 hyprwhspr config llm test --scratchpad "make the first sentence shorter"
 ```
 
+## Reading the draft aloud
+
+Listen to the draft before you paste it, without looking at it. hyprwhspr reads it with ElevenLabs Eleven v4
+Turbo on [OpenRouter](https://openrouter.ai/elevenlabs/eleven-v4-turbo), using the OpenRouter key from
+`hyprwhspr config llm`, and plays it with `mpv`, `ffplay`, `pw-play` or `paplay`, whichever is installed first.
+
+Ask for it any of these ways:
+
+- **A key**: `"scratchpad_speak_shortcut": "SUPER+ALT+R"`. Press it again to stop
+- **Your voice**: with [voice control](VOICE_CONTROL.md), say "read me the draft"
+- **A command**: `hyprwhspr scratchpad speak`, or `hyprwhspr scratchpad speak george` for one reading in
+  another voice
+
+Pick the voice with `hyprwhspr scratchpad voice NAME`. It's saved in your config and applies to a running service
+straight away. The voices are george, sarah (the default), adam, alice, bella, bill, brian, callum, charlie, chris,
+daniel, eric, harry, jessica, laura, liam, lily, matilda, river, roger and will.
+
+- Markdown marks (headings, bullets, `**bold**`, backticks, link targets) are left out of what's read
+- A long draft is read in parts of about 1,500 characters. The next part is prepared while one plays, so reading
+  starts after the first part, not the whole draft
+- Reading stops when a recording starts or you say the start word, so the microphone doesn't pick it up
+- OpenRouter charges per character read. Eleven v4 Turbo costs $20 per million characters, about 2 cents for a
+  1,000 character draft
+- The draft goes to OpenRouter for every reading. The audio is kept in the runtime directory only while it plays
+
+If reading fails (no key, no credits, network, no player), you get a notification with the reason.
+
 ## Where the draft is kept
 
 The draft is one file, `$XDG_RUNTIME_DIR/hyprwhspr/scratchpad.md`, readable only by you (mode `0600`). The
@@ -122,6 +152,10 @@ The service log never contains it. While the panel shows the draft, a copy sits 
     "scratchpad_model": null,             // null = llm_refine_model
     "scratchpad_timeout": 30,             // seconds per edit
     "scratchpad_clear_on_paste": true,    // false keeps the draft after a paste
+    "scratchpad_speak_shortcut": null,    // e.g. "SUPER+ALT+R": read the draft aloud, again to stop
+    "scratchpad_voice": "sarah",          // hyprwhspr scratchpad voice NAME
+    "scratchpad_speech_model": "elevenlabs/eleven-v4-turbo",
+    "scratchpad_speech_timeout": 30,      // seconds per part read
     "scratchpad_preview": true,           // the preview panel; false = notifications
     "scratchpad_preview_seconds": 8       // panel time after a change; 0 = until paste or clear
 }

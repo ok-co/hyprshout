@@ -489,6 +489,16 @@ class AudioCapture:
         except Exception:
             return False
 
+    def input_is_shared(self) -> bool:
+        """True when another stream may read the microphone alongside recordings.
+
+        The default device (device_id None) shares through a running sound
+        server; an explicit one must route through it, not raw ALSA.
+        """
+        if self.device_id is None:
+            return self._sound_server_running()
+        return self._is_multiplexed_audio_server()
+
     @staticmethod
     def _sound_server_running() -> bool:
         """True when a PipeWire or PulseAudio runtime socket is present."""

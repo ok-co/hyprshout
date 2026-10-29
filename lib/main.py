@@ -87,10 +87,11 @@ from app.feedback import FeedbackMixin
 from app.control import ControlMixin
 from app.recovery import RecoveryMixin
 from app.scratchpad import ScratchpadMixin
+from app.voice import VoiceControlMixin
 from scratchpad import Scratchpad
 
 class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, ControlMixin, RecoveryMixin,
-                   ScratchpadMixin):
+                   ScratchpadMixin, VoiceControlMixin):
     """Main application class for hyprwhspr voice dictation (Headless Mode)"""
 
     def _diagnostics_snapshot(self):
@@ -123,9 +124,11 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
         self._translate_shortcuts = None
         self._scratchpad_shortcuts = None
         self._scratchpad_paste_shortcuts = None
+        self._scratchpad_speak_shortcuts = None
         self._cancel_shortcuts = None
         self._scratchpad = Scratchpad()  # Draft built by scratchpad dictations, pasted when ready
         self._scratchpad_notification_id = None
+        self._scratchpad_speech = None  # SpeechPlayer reading the draft aloud, made on first use
         self._scratchpad_panel = None  # Preview panel runner, created on first use (False: unavailable)
 
         # Application state
@@ -265,6 +268,18 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
         )
         self._longform_submit_shortcuts = None  # Submit shortcut handler
 
+        # Voice control (app/voice.py): the wake word listener, the quiet
+        # command session ('idle' | 'command' | 'deciding' | 'acting'), and
+        # the plan of the current voice-started dictation. The generation
+        # retires a command a manual start or cancel overtook.
+        self._voice_listener = None
+        self._voice_lock = threading.Lock()
+        self._voice_state = 'idle'
+        self._voice_generation = 0
+        self._voice_plan = None
+        self._voice_start_phrase = None
+        self._voice_end_phrase = None
+
         # Track startup time BEFORE any monitors are initialized
         # This prevents race condition where hotplug events arrive before _startup_time is set
         self._startup_time = time.monotonic()
@@ -387,6 +402,7 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
             return False
 
         self._recording_control_server.start()
+        self._start_voice_control()
 
         self._report_missing_dependencies()
         self._report_cpu_only_build()
@@ -458,6 +474,9 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
         try:
             cleanup_step("stop recording control server", self._recording_control_server.stop)
 
+            # Stop the wake word listener before capture and backends go away
+            cleanup_step("stop voice control", self._stop_voice_control)
+
             # Stop background recovery thread
             cleanup_step("stop background recovery", lambda: stop_thread(
                 '_background_recovery_stop', '_background_recovery_thread',
@@ -491,6 +510,9 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
             cleanup_step("stop scratchpad shortcut", lambda: call_optional('_scratchpad_shortcuts', 'stop'))
             cleanup_step("stop scratchpad paste shortcut",
                          lambda: call_optional('_scratchpad_paste_shortcuts', 'stop'))
+            cleanup_step("stop scratchpad speak shortcut",
+                         lambda: call_optional('_scratchpad_speak_shortcuts', 'stop'))
+            cleanup_step("stop reading the scratchpad", lambda: call_optional('_scratchpad_speech', 'stop'))
             cleanup_step("stop scratchpad preview", self._stop_scratchpad_preview)
 
             # Stop cancel shortcut

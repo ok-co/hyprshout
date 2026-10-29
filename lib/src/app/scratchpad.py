@@ -1,12 +1,14 @@
-"""Scratchpad: dictations that edit a draft, pasted only when it is ready."""
+"""Scratchpad: dictations that edit a draft, pasted (or read aloud) when it is ready."""
 
 import html
 import threading
 import time
 
 import llm_refiner
+import speech_output
 from scratchpad import ScratchpadConflict
 from service_log import log
+from speech_output import SpeechError, SpeechPlayer
 from text_injector import InjectionOutcome, preprocess_text
 
 # Tail of the draft shown in the notification after each change.
@@ -21,7 +23,7 @@ _panel_init_lock = threading.Lock()
 
 
 class ScratchpadMixin:
-    """Scratchpad route, its socket requests, the paste shortcut and the preview."""
+    """Scratchpad route, its socket requests, the paste and speak shortcuts and the preview."""
 
     def _scratchpad_apply(self, text):
         """Apply one dictation to the draft with the LLM; never pastes.
@@ -64,8 +66,12 @@ class ScratchpadMixin:
         )
         return InjectionOutcome.FAILED
 
-    def _handle_scratchpad_request(self, verb):
-        """Serve a scratchpad_* socket request; returns (ok, message or draft)."""
+    def _handle_scratchpad_request(self, verb, voice=None):
+        """Serve a scratchpad_* socket request; returns (ok, message or draft).
+
+        voice is the voice for one scratchpad_speak, or the new
+        scratchpad_voice for scratchpad_voice.
+        """
         pad = self._scratchpad
         if verb == 'scratchpad_show':
             return True, pad.read()
@@ -84,6 +90,19 @@ class ScratchpadMixin:
             return True, 'Undone'
         if verb in ('scratchpad_copy', 'scratchpad_paste'):
             return self._scratchpad_deliver(verb[len('scratchpad_'):])
+        if verb == 'scratchpad_speak':
+            return self._scratchpad_speak(voice)
+        if verb == 'scratchpad_stop':
+            if self._stop_scratchpad_speech():
+                return True, 'Stopped reading the draft'
+            return True, 'Not reading the draft'
+        if verb == 'scratchpad_voice':
+            name = speech_output.normalize_voice(voice)
+            if name is None:
+                return False, f"Unknown voice; choose one of: {', '.join(speech_output.VOICES)}"
+            self.config.set_setting('scratchpad_voice', name)
+            log(f"[SCRATCHPAD] Voice set to {name}")
+            return True, f'The draft is read in the voice {name}'
         return False, 'Unknown scratchpad request'
 
     def _scratchpad_deliver(self, action):
@@ -107,6 +126,54 @@ class ScratchpadMixin:
         ok, message = self._scratchpad_deliver('paste')
         if not ok:
             log(f"[SCRATCHPAD] Paste not done: {message}")
+            self._notify_user("hyprwhspr scratchpad", message)
+
+    # ------------------------ Reading the draft aloud ------------------------
+
+    def _scratchpad_speak(self, voice=None):
+        """Read the draft aloud; a second request without a voice stops it (one key toggles)."""
+        reader = self._scratchpad_reader()
+        if voice is None and reader.speaking:
+            reader.stop()
+            log("[SCRATCHPAD] Stopped reading the draft")
+            return True, 'Stopped reading the draft'
+        if voice is not None and speech_output.normalize_voice(voice) is None:
+            return False, f"Unknown voice; choose one of: {', '.join(speech_output.VOICES)}"
+        draft = self._scratchpad.read()
+        if not draft:
+            return False, 'The draft is empty'
+        name = speech_output.normalize_voice(voice) or speech_output.configured_voice(self.config.get_setting)
+        try:
+            reader.speak(draft, name)
+        except SpeechError as e:
+            log(f"[SCRATCHPAD] Cannot read the draft aloud: {e}")
+            return False, f'Cannot read the draft aloud: {e}'
+        log(f"[SCRATCHPAD] Reading the draft aloud ({len(draft)} chars, voice {name})")
+        return True, f'Reading the draft aloud ({name})'
+
+    def _scratchpad_reader(self):
+        reader = getattr(self, '_scratchpad_speech', None)
+        if reader is None:
+            get_setting = self.config.get_setting
+            reader = SpeechPlayer(
+                lambda part, voice: speech_output.synthesize(part, get_setting, voice),
+                on_error=self._on_scratchpad_speech_error,
+            )
+            self._scratchpad_speech = reader
+        return reader
+
+    def _stop_scratchpad_speech(self):
+        """Stop reading the draft (a recording would hear it); False if it wasn't being read."""
+        reader = getattr(self, '_scratchpad_speech', None)
+        return reader is not None and reader.stop()
+
+    def _on_scratchpad_speech_error(self, message):
+        log(f"[SCRATCHPAD] Reading the draft aloud failed: {message}")
+        self._notify_user("hyprwhspr scratchpad", f"Reading the draft aloud failed: {message}")
+
+    def _on_scratchpad_speak_shortcut(self):
+        ok, message = self._scratchpad_speak()
+        if not ok:
             self._notify_user("hyprwhspr scratchpad", message)
 
     # ------------------------ Preview ------------------------

@@ -57,3 +57,6 @@ MODEL_UNLOADED_FILE = RUNTIME_DIR / 'model_unloaded'
 
 # Recent raw recordings, kept when 'debug_recordings' is on
 DEBUG_RECORDINGS_DIR = RUNTIME_DIR / 'recordings'
+
+# Voice control: downloaded openWakeWord models
+WAKEWORD_MODELS_DIR = DATA_DIR / 'wakeword'
