@@ -173,6 +173,7 @@ class VoiceControlTests(unittest.TestCase):
         app = self.app()
         app._start_recording = types.MethodType(self.App._start_recording, app)
         app._voice_preempt = mock.Mock()
+        app._stop_scratchpad_speech = mock.Mock()
         app.text_injector = mock.Mock()
         app.text_injector.stream_busy.return_value = False
         app.whisper_manager.realtime_client_missing.return_value = False
@@ -194,6 +195,14 @@ class VoiceControlTests(unittest.TestCase):
         app._start_recording()
         app._voice_preempt.assert_called_once()
         self.assertIsNone(app._voice_plan)
+        # Every start stops the draft being read aloud: the microphone would hear it
+        self.assertEqual(app._stop_scratchpad_speech.call_count, 2)
+
+    def test_the_start_word_stops_the_draft_being_read_aloud(self):
+        app = self.app()
+        app._scratchpad_speech = mock.Mock()
+        app._on_wake_event('start', 1.0)
+        app._scratchpad_speech.stop.assert_called_once_with()
 
     def test_a_decision_overtaken_by_a_manual_start_does_nothing(self):
         app = self.app()

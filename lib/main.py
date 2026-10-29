@@ -124,9 +124,11 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
         self._translate_shortcuts = None
         self._scratchpad_shortcuts = None
         self._scratchpad_paste_shortcuts = None
+        self._scratchpad_speak_shortcuts = None
         self._cancel_shortcuts = None
         self._scratchpad = Scratchpad()  # Draft built by scratchpad dictations, pasted when ready
         self._scratchpad_notification_id = None
+        self._scratchpad_speech = None  # SpeechPlayer reading the draft aloud, made on first use
 
         # Application state
         self.is_recording = False
@@ -501,6 +503,9 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
             cleanup_step("stop scratchpad shortcut", lambda: call_optional('_scratchpad_shortcuts', 'stop'))
             cleanup_step("stop scratchpad paste shortcut",
                          lambda: call_optional('_scratchpad_paste_shortcuts', 'stop'))
+            cleanup_step("stop scratchpad speak shortcut",
+                         lambda: call_optional('_scratchpad_speak_shortcuts', 'stop'))
+            cleanup_step("stop reading the scratchpad", lambda: call_optional('_scratchpad_speech', 'stop'))
 
             # Stop cancel shortcut
             cleanup_step("stop cancel shortcut", lambda: call_optional('_cancel_shortcuts', 'stop'))

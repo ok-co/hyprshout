@@ -20,6 +20,7 @@ class RecordingControlServer:
     _START_VERBS = ("start", "translate", "scratchpad")
     _SCRATCHPAD_REQUESTS = (
         "scratchpad_show", "scratchpad_paste", "scratchpad_copy", "scratchpad_clear", "scratchpad_undo",
+        "scratchpad_speak", "scratchpad_stop", "scratchpad_voice",
     )
 
     def __init__(self, fifo_path, socket_path, on_command, is_recording,
@@ -512,7 +513,13 @@ class RecordingControlServer:
                     raise RuntimeError('daemon is shutting down')
                 if self._on_scratchpad is None:
                     raise RuntimeError('the scratchpad is unavailable; update or restart the daemon')
-                ok, payload = self._on_scratchpad(request['verb'])
+                voice = request.get('voice')
+                if voice is not None and not isinstance(voice, str):
+                    raise ValueError('voice must be a string')
+                if voice is not None:
+                    ok, payload = self._on_scratchpad(request['verb'], voice=voice)
+                else:
+                    ok, payload = self._on_scratchpad(request['verb'])
                 response = {'ok': bool(ok)}
                 if not ok:
                     response['error'] = str(payload)

@@ -90,6 +90,43 @@ class ScratchpadCliTests(unittest.TestCase):
             cli_scratchpad.scratchpad_command("clear")
         self.assertIn("daemon is running", log_error.call_args[0][0])
 
+    def test_speak_sends_a_voice_for_this_reading(self):
+        received = self._serve({"ok": True, "message": "Reading the draft aloud (lily)"})
+        with mock.patch.object(cli_scratchpad, "log_success"):
+            cli_scratchpad.scratchpad_command("speak", "Lily")
+        self.assertEqual(received, [{"verb": "scratchpad_speak", "voice": "lily"}])
+
+    def test_unknown_voice_or_stray_argument_exits_non_zero(self):
+        for action, value in (("speak", "nobody"), ("voice", "nobody"), ("paste", "lily")):
+            with self.subTest(action=action), mock.patch.object(cli_scratchpad, "log_error"), \
+                    self.assertRaises(SystemExit) as caught:
+                cli_scratchpad.scratchpad_command(action, value)
+            self.assertEqual(caught.exception.code, 1)
+
+    def test_voice_saves_the_choice_and_tells_the_daemon(self):
+        config = mock.Mock()
+        config.get_setting.side_effect = lambda key, default=None: default
+        config.save_config.return_value = True
+        received = self._serve({"ok": True, "message": "ok"})
+        with mock.patch.object(cli_scratchpad, "ConfigManager", return_value=config), \
+                mock.patch.object(cli_scratchpad, "log_success"):
+            cli_scratchpad.scratchpad_command("voice", "George")
+        config.set_setting.assert_called_once_with("scratchpad_voice", "george")
+        config.save_config.assert_called_once_with()
+        self.assertEqual(received, [{"verb": "scratchpad_voice", "voice": "george"}])
+
+    def test_voice_lists_the_voices_and_marks_the_current_one(self):
+        config = mock.Mock()
+        config.get_setting.side_effect = lambda key, default=None: "bella" if key == "scratchpad_voice" else default
+        with mock.patch.object(cli_scratchpad, "ConfigManager", return_value=config), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out, \
+                mock.patch("sys.stderr", new_callable=io.StringIO):
+            cli_scratchpad.scratchpad_command("voice")
+        lines = out.getvalue().splitlines()
+        self.assertEqual(len(lines), 21)
+        self.assertIn("* bella", lines)
+        self.assertIn("  sarah", lines)
+
     def test_edit_creates_a_private_file_and_opens_the_editor(self):
         with mock.patch.dict(os.environ, {"EDITOR": "vi"}), \
                 mock.patch.object(cli_scratchpad.subprocess, "run") as run:

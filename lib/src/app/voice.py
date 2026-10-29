@@ -103,6 +103,8 @@ class VoiceControlMixin:
             self._voice_state = 'command'
             self._voice_generation += 1
             self._voice_listener.begin_capture()
+        # The command must not be transcribed over the draft being read aloud
+        self._stop_scratchpad_speech()
         log("[VOICE] Listening for a command")
         self._voice_cue('start')
 

@@ -80,6 +80,9 @@ hyprwhspr scratchpad copy          # copy it to the clipboard
 hyprwhspr scratchpad undo          # undo the last change
 hyprwhspr scratchpad clear
 hyprwhspr scratchpad edit          # open it in $EDITOR
+hyprwhspr scratchpad speak         # read it aloud (again: stop); speak NAME uses that voice once
+hyprwhspr scratchpad stop          # stop reading
+hyprwhspr scratchpad voice [NAME]  # list the voices, or pick the one it's read in
 hyprwhspr scratchpad status
 hyprwhspr config llm test --scratchpad "text"   # try an edit on a copy of the draft
 ```
