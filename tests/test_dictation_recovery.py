@@ -63,7 +63,7 @@ class DictationRecoveryTests(unittest.TestCase):
         with mock.patch.object(injector, '_inject_via_clipboard_and_hotkey', return_value=True) as paste, \
                 mock.patch.object(injector, '_run_post_transcription_hook') as hook:
             self.assertEqual(injector.deliver_prepared('line one\nline two', 'paste'), (True, 'Paste dispatched'))
-        paste.assert_called_once_with('line one\nline two', auto_submit=False, retain=True)
+        paste.assert_called_once_with('line one\nline two', auto_submit=False, retain=True, clipboard_only=True)
         hook.assert_not_called()
         with mock.patch.object(injector, '_copy_text_to_clipboard', return_value=True) as copy:
             self.assertTrue(injector.deliver_prepared('draft', 'copy')[0])

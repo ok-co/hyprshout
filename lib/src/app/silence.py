@@ -255,7 +255,8 @@ class SilenceMixin:
                     if outcome == InjectionOutcome.INJECTED:
                         log(f"[CONTINUOUS] Pasted: {preview}")
                     elif outcome == InjectionOutcome.CONSUMED:
-                        log(f"[CONTINUOUS] Consumed by hook: {preview}")
+                        consumer = 'scratchpad' if route == 'scratchpad' else 'hook'
+                        log(f"[CONTINUOUS] Consumed by {consumer}: {preview}")
                     else:
                         log(f"[CONTINUOUS] Injection failed: {preview}")
                 else:
