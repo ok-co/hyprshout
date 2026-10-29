@@ -43,8 +43,10 @@ hyprwhspr setup
 <details>
 <summary>Build from source on Arch</summary>
 
-Builds from a git checkout instead of the AUR package. Remove the AUR package
-first (`sudo pacman -R hyprwhspr`) so the two installs don't compete.
+Builds from a git checkout instead of the AUR package. No AUR helper is needed:
+system packages come from the official repositories via pacman, and the rest is
+installed from PyPI during setup. Remove the AUR package first
+(`sudo pacman -R hyprwhspr`) so the two installs don't compete.
 
 ```bash
 curl -fsSL https://hyprwhspr.com/install.sh | HYPRWHSPR_FROM_SOURCE=1 bash

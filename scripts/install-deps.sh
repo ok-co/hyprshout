@@ -217,9 +217,6 @@ check_python_version() {
         echo ""
         echo "  1) Install Python ${MAX_PYTHON_MAJOR}.${MAX_PYTHON_MINOR} or ${MAX_PYTHON_MAJOR}.$((MAX_PYTHON_MINOR-1)) alongside your current Python:"
         case "$PKG_MANAGER" in
-            pacman)
-                echo "     yay -S python314  # AUR, or python313"
-                ;;
             dnf)
                 echo "     sudo dnf install python3.14  # or python3.13"
                 ;;
@@ -423,7 +420,8 @@ install_deps_apt() {
     log_success "System dependencies installed"
 }
 
-# Install dependencies for Arch Linux and derivatives
+# Install dependencies for Arch Linux and derivatives. Every package is in the
+# official repositories, so no AUR helper is needed.
 install_deps_pacman() {
     log_info "Installing system dependencies via pacman..."
 
@@ -449,7 +447,10 @@ install_deps_pacman() {
         python-dbus \
         python-gobject \
         python-cairo \
+        python-pyperclip \
+        python-websocket-client \
         gtk4 \
+        gtk4-layer-shell \
         portaudio \
         pipewire \
         libpulse \
@@ -467,33 +468,9 @@ install_deps_pacman() {
         sudo pacman -S --needed --noconfirm pipewire-pulse
     fi
 
-    # Optional Python packages (some live in the AUR rather than the official
-    # repos). Missing application packages are installed in the owned environment during setup.
-    local optional_packages=(
-        python-sounddevice
-        python-pyperclip
-        python-pulsectl
-        python-websocket-client
-    )
-    local available_packages=()
-    local pkg
-    for pkg in "${optional_packages[@]}"; do
-        if pacman -Si "$pkg" &> /dev/null; then
-            available_packages+=("$pkg")
-        else
-            log_warning "Package $pkg not found in pacman repos - will be installed in the application environment"
-        fi
-    done
-    if [[ ${#available_packages[@]} -gt 0 ]]; then
-        sudo pacman -S --needed --noconfirm "${available_packages[@]}"
-    fi
-
-    if pacman -Si gtk4-layer-shell &> /dev/null; then
-        sudo pacman -S --needed --noconfirm gtk4-layer-shell
-        log_success "gtk4-layer-shell installed (mic-osd visualizer available)"
-    else
-        log_info "System gtk4-layer-shell unavailable; setup may install an app-private runtime"
-    fi
+    # sounddevice and pulsectl are only packaged in the AUR; setup installs them
+    # from PyPI into the application environment instead.
+    log_info "sounddevice and pulsectl will be installed in the application environment during setup"
 
     log_success "System dependencies installed"
 }

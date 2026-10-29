@@ -6,12 +6,21 @@ test installs packages or reads the host's /etc/os-release.
 
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'lib'))
+sys.path.insert(0, str(ROOT / 'lib' / 'src'))
+
+import backend_installer  # noqa: E402
+
+# Packaged only in the AUR; setup installs them from PyPI instead.
+AUR_ONLY = ('python-sounddevice', 'python-pulsectl')
 
 PACMAN_STUB = '''#!/usr/bin/env bash
 echo "pacman $*" >> "$STUB_LOG"
@@ -23,8 +32,6 @@ case "$1" in
             if [[ " $PACMAN_INSTALLED " == *" $pkg "* ]]; then echo "$pkg"; found=0; fi
         done
         exit $found ;;
-    -Si)
-        [[ " $PACMAN_AVAILABLE " == *" $2 "* ]] ;;
 esac
 '''
 
@@ -39,7 +46,7 @@ exit 1
 
 
 class ArchStubEnvironment:
-    def __init__(self, tmp, os_release='ID=cachyos\nID_LIKE=arch\n', installed='', available=''):
+    def __init__(self, tmp, os_release='ID=cachyos\nID_LIKE=arch\n', installed=''):
         tmp = Path(tmp)
         stubs = tmp / 'bin'
         stubs.mkdir()
@@ -56,7 +63,6 @@ class ArchStubEnvironment:
             'OS_RELEASE_FILE': str(tmp / 'os-release'),
             'STUB_LOG': str(self.log),
             'PACMAN_INSTALLED': installed,
-            'PACMAN_AVAILABLE': available,
         }
 
     def calls(self):
@@ -78,9 +84,9 @@ class InstallDepsArchTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertTrue(result.stdout.strip().endswith('arch pacman'), result.stdout)
 
-    def test_pacman_install_uses_needed_without_partial_upgrade(self):
+    def test_pacman_install_uses_official_repos_without_partial_upgrade(self):
         with tempfile.TemporaryDirectory() as tmp:
-            stub = ArchStubEnvironment(tmp, available='python-pyperclip gtk4-layer-shell')
+            stub = ArchStubEnvironment(tmp)
             result = self.run_deps(stub, 'install_deps_pacman')
             self.assertEqual(result.returncode, 0, result.stderr)
             installs = [call for call in stub.calls() if call.startswith('pacman -S ')]
@@ -92,9 +98,10 @@ class InstallDepsArchTests(unittest.TestCase):
             for pkg in ('python-evdev', 'ydotool', 'wl-clipboard', 'xdotool', 'xorg-xprop',
                         'pipewire-pulse', 'python-pyperclip', 'gtk4-layer-shell'):
                 self.assertIn(pkg, packages)
-            # Optional packages missing from the repos are left to the application environment.
-            self.assertNotIn('python-sounddevice', packages)
-            self.assertIn('python-sounddevice not found', result.stdout)
+            for pkg in AUR_ONLY:
+                self.assertNotIn(pkg, packages)
+            self.assertIn('sounddevice and pulsectl will be installed', result.stdout)
+            self.assertFalse([call for call in stub.calls() if 'yay' in call or 'paru' in call])
 
     def test_existing_pulseaudio_is_kept(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -109,6 +116,22 @@ class InstallDepsArchTests(unittest.TestCase):
             result = self.run_deps(stub, 'install_deps_pacman')
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("AUR package 'hyprwhspr-git' is installed", result.stdout)
+
+
+class RocmArchTests(unittest.TestCase):
+    def test_rocm_installs_from_official_repos(self):
+        tools = {'rocm-smi': '/usr/bin/rocm-smi', 'pacman': '/usr/bin/pacman', 'yay': '/usr/bin/yay'}
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.dict(os.environ, {'ROCM_PATH': str(Path(tmp) / 'rocm')}), \
+                mock.patch.object(backend_installer.shutil, 'which', side_effect=tools.get), \
+                mock.patch.object(backend_installer, 'run_command',
+                                  return_value=subprocess.CompletedProcess([], 0)), \
+                mock.patch.object(backend_installer, 'run_sudo_command') as sudo:
+            self.assertFalse(backend_installer.setup_amd_support())
+        sudo.assert_called_once()
+        command = sudo.call_args.args[0]
+        self.assertEqual(command[:2], ['pacman', '-S'])
+        self.assertIn('rocm-hip-sdk', command)
 
 
 class BootstrapArchTests(unittest.TestCase):
