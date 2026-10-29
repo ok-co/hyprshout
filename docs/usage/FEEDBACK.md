@@ -70,6 +70,12 @@ Shows the last few words while recording. Opt-in; needs `mic_osd_style: pill` pl
 | `mic_osd_pill_transcript_word_limit` | `4` | Recent words shown (1–12). |
 | `mic_osd_pill_transcript_idle_timeout_ms` | `1400` | Hide after this much idle time; `0` disables. |
 
+### Scratchpad panel
+
+While you draft in the [scratchpad](SCRATCHPAD.md#preview-panel), an overlay panel above the mic OSD shows the
+draft with the last change highlighted. It needs the same GTK4 and layer-shell support as overlay mode; in
+notification mode each change shows as a notification.
+
 ## Audio feedback
 
 Optional sound notifications:

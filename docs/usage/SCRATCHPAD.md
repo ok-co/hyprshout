@@ -14,7 +14,8 @@ the current draft. The LLM works out what you meant:
 - Requests meant for whoever reads the draft stay content. "Add tests for the parser" is part of your prompt,
   not an instruction to the LLM. Only a dictation about the draft itself edits it
 
-Nothing is pasted while you draft. You see the end of the draft in a notification after each change.
+Nothing is pasted while you draft. A [preview panel](#preview-panel) shows the draft as it grows, with the last
+change highlighted.
 
 ## Setup
 
@@ -56,6 +57,27 @@ The draft is pasted as it is, line breaks included. It's never followed by an En
 so you can read it over in the target before you send it. After a paste the draft is cleared, ready for the next
 one. `hyprwhspr scratchpad undo` brings it back.
 
+## Preview panel
+
+While you dictate into the scratchpad, a panel above the recording overlay shows the draft:
+
+![Scratchpad preview panel](../assets/scratchpad-panel.png)
+
+- The header follows the dictation: listening, transcribing, updating the draft, then the result. Paused shows
+  while a long-form session is paused
+- After each change the words that changed are highlighted and scrolled into view. A deletion scrolls to where
+  the text was removed
+- The panel stays up for `scratchpad_preview_seconds` (8) after a change, then hides. Set it to `0` to keep the
+  panel on screen until you paste or clear the draft
+- A paste, copy or clear shows briefly. `scratchpad undo` shows the restored draft like any other change
+- The panel never takes keyboard focus, and clicks go through it, so the field you'll paste into keeps focus
+- It uses the [mic OSD theme](FEEDBACK.md), including Omarchy and Noctalia colors
+
+The panel needs GTK4 and gtk4-layer-shell, the same as the [mic OSD](FEEDBACK.md), and a compositor with layer
+shell support (Hyprland, Sway, niri, river and others). It runs as a small separate process that starts the first
+time you use the scratchpad and quits after ten minutes hidden. On GNOME, or with `"scratchpad_preview": false`,
+each change shows in a desktop notification instead.
+
 ## Commands
 
 ```bash
@@ -88,7 +110,8 @@ hyprwhspr config llm test --scratchpad "make the first sentence shorter"
 
 The draft is one file, `$XDG_RUNTIME_DIR/hyprwhspr/scratchpad.md`, readable only by you (mode `0600`). The
 runtime directory is in memory: the draft survives a service restart, and is gone after you log out or reboot.
-The service log never contains it.
+The service log never contains it. While the panel shows the draft, a copy sits next to it in
+`scratchpad_preview.json`, also `0600`; it's removed when the service stops.
 
 ## Configuration
 
@@ -98,7 +121,9 @@ The service log never contains it.
     "scratchpad_paste_shortcut": null,    // e.g. "SUPER+ALT+P"
     "scratchpad_model": null,             // null = llm_refine_model
     "scratchpad_timeout": 30,             // seconds per edit
-    "scratchpad_clear_on_paste": true     // false keeps the draft after a paste
+    "scratchpad_clear_on_paste": true,    // false keeps the draft after a paste
+    "scratchpad_preview": true,           // the preview panel; false = notifications
+    "scratchpad_preview_seconds": 8       // panel time after a change; 0 = until paste or clear
 }
 ```
 
@@ -111,7 +136,7 @@ refinement prompt file don't.
 ## Failures
 
 If an edit fails (no key, network error, timeout, or a reply without a complete draft), the draft is left
-unchanged. You get a notification with the reason, and the dictation is kept for
+unchanged. The panel and a notification show the reason, and the dictation is kept for
 `hyprwhspr record copy-last`. Nothing is ever pasted by mistake, and a dictation that was meant as an edit
 is never added to the draft word for word.
 
