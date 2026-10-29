@@ -184,10 +184,11 @@ class VoiceControlTests(unittest.TestCase):
         for attr in ('_hide_mic_osd', '_stop_audio_level_monitoring', '_cancel_live_typing',
                      '_write_recording_status', '_restore_recording_playback'):
             setattr(app, attr, mock.Mock())
-        plan = self.DictationPlan(output='scratchpad')
-        app._start_recording(voice_plan=plan)
+        plan = self.DictationPlan(route='scratchpad')
+        app._start_recording(route='scratchpad', voice_plan=plan)
         app._voice_preempt.assert_not_called()
         self.assertIs(app._voice_plan, plan)
+        self.assertEqual(app._current_route, 'scratchpad')
 
         app.is_recording = False
         app._start_recording()
@@ -224,14 +225,19 @@ class VoiceControlTests(unittest.TestCase):
         self.assertEqual(app._voice_state, 'idle')
         return fake
 
-    def test_dictation_decisions_start_a_recording_with_their_plan(self):
-        app = self.app(voice_control_translation_language='fr')
-        fake = self.run_command(app, 'Hey Jarvis, translate what I say. Hey Mycroft.',
-                                self.VoiceDecision('translate', 0.9, spoken_language='de'))
-        self.assertEqual(fake.decide.call_args.args[0], 'translate what I say.')
+    def test_dictation_decisions_start_a_recording_on_their_route(self):
+        app = self.app()
+        fake = self.run_command(app, 'Hey Jarvis, translate what I say into French. Hey Mycroft.',
+                                self.VoiceDecision('translate', 0.9, spoken_language='de', target_language='fr'))
+        self.assertEqual(fake.decide.call_args.args[0], 'translate what I say into French.')
         app._start_recording.assert_called_once_with(
-            language_override='de',
-            voice_plan=self.DictationPlan(refine='translate', target_language='fr'))
+            language_override='de', route='translate',
+            voice_plan=self.DictationPlan(route='translate', translate_language='French'))
+
+        app = self.app()
+        self.run_command(app, 'take a note', self.VoiceDecision('scratchpad', 0.9))
+        app._start_recording.assert_called_once_with(
+            language_override=None, route='scratchpad', voice_plan=self.DictationPlan(route='scratchpad'))
 
     def test_start_word_is_ignored_while_the_decided_dictation_starts(self):
         app = self.app()
@@ -252,6 +258,20 @@ class VoiceControlTests(unittest.TestCase):
         app._handle_recovery.assert_called_once_with('paste_last')
         self.assertIn('No saved dictation', app._notify_user.call_args.args[1])
         app._start_recording.assert_not_called()
+
+    def test_scratchpad_decisions_run_the_draft_requests(self):
+        for action in ('scratchpad_paste', 'scratchpad_copy', 'scratchpad_undo', 'scratchpad_clear'):
+            app = self.app()
+            app._handle_scratchpad_request = mock.Mock(return_value=(True, 'done'))
+            with self.subTest(action=action):
+                self.run_command(app, 'do it', self.VoiceDecision(action, 0.9))
+                app._handle_scratchpad_request.assert_called_once_with(action)
+                app._notify_user.assert_not_called()
+                app._start_recording.assert_not_called()
+        app = self.app()
+        app._handle_scratchpad_request = mock.Mock(return_value=(False, 'The draft is empty'))
+        self.run_command(app, 'paste the draft', self.VoiceDecision('scratchpad_paste', 0.9))
+        self.assertIn('The draft is empty', app._notify_user.call_args.args[1])
 
     def test_unclear_commands_are_reported_and_cancels_are_quiet(self):
         app = self.app()
@@ -295,55 +315,42 @@ class VoiceControlTests(unittest.TestCase):
         app._mark_delivery_healthy = mock.Mock()
         return app
 
-    def test_plain_dictations_keep_the_configured_refine_step(self):
+    def test_manual_dictations_pass_only_their_route(self):
         app = self.delivery_app()
-        app._inject_text('hello', voice_plan=self.DictationPlan())
-        app.text_injector.inject_text.assert_called_once_with('hello')
+        app._inject_text('hello', route='translate')
+        app.text_injector.inject_text.assert_called_once_with('hello', translate=True)
 
-    def test_raw_dictations_skip_refinement(self):
+    def test_voice_plans_add_raw_and_the_translation_language(self):
+        cases = (
+            ('paste', self.DictationPlan(), {'translate': False}),
+            ('paste', self.DictationPlan(raw=True), {'translate': False, 'raw': True}),
+            ('translate', self.DictationPlan(route='translate', translate_language='German'),
+             {'translate': True, 'translate_language': 'German'}),
+        )
+        for route, plan, expected in cases:
+            app = self.delivery_app()
+            with self.subTest(plan=plan):
+                app._inject_text('hello', route=route, voice_plan=plan)
+                app.text_injector.inject_text.assert_called_once_with('hello', **expected)
+
+    def test_scratchpad_dictations_edit_the_draft(self):
         app = self.delivery_app()
-        app._inject_text('um hello', voice_plan=self.DictationPlan(refine='off'))
-        refine = app.text_injector.inject_text.call_args.kwargs['refine']
-        self.assertEqual(refine('um hello'), 'um hello')
-
-    def test_translated_dictations_translate_or_keep_the_original(self):
-        app = self.delivery_app()
-        app._inject_text('hello', voice_plan=self.DictationPlan(refine='translate', target_language='de'))
-        refine = app.text_injector.inject_text.call_args.kwargs['refine']
-        translate = mock.Mock(return_value='Hallo')
-        with patch_app_global(self.App, 'voice_command', types.SimpleNamespace(translate_text=translate)):
-            self.assertEqual(refine('hello'), 'Hallo')
-            self.assertEqual(translate.call_args.args[:2], ('hello', 'de'))
-            translate.side_effect = RuntimeError('HTTP 500')
-            self.assertEqual(refine('hello'), 'hello')
-        self.assertIn('Translation failed', app._notify_user.call_args.args[1])
-
-    def test_scratchpad_dictations_are_saved_not_pasted(self):
-        path = Path(self.tmp.name) / 'pad.md'
-        app = self.delivery_app(voice_control_scratchpad_file=str(path))
-        app.text_injector.prepare_text.return_value = 'Buy milk.'
-        outcome = app._inject_text('buy milk', voice_plan=self.DictationPlan(output='scratchpad'))
+        app._scratchpad_apply = mock.Mock(return_value=self.outcome.CONSUMED)
+        outcome = app._inject_text('buy milk', route='scratchpad', voice_plan=self.DictationPlan(route='scratchpad'))
         self.assertEqual(outcome, self.outcome.CONSUMED)
+        app._scratchpad_apply.assert_called_once_with('buy milk')
         app.text_injector.inject_text.assert_not_called()
-        self.assertIn('Buy milk.', path.read_text(encoding='utf-8'))
-
-    def test_scratchpad_write_failure_is_a_failed_delivery(self):
-        app = self.delivery_app(voice_control_scratchpad_file=self.tmp.name)  # a directory
-        app.text_injector.prepare_text.return_value = 'note'
-        outcome = app._inject_text('note', voice_plan=self.DictationPlan(output='scratchpad'))
-        self.assertEqual(outcome, self.outcome.FAILED)
-        self.assertIn('scratchpad', app._notify_user.call_args.args[1])
 
     def test_capture_clients_still_get_the_raw_text(self):
         app = self.delivery_app()
         app._recording_control_server.has_capture_subscriber.return_value = True
         app._notify_capture = mock.Mock()
-        app._inject_text('hello', voice_plan=self.DictationPlan(output='scratchpad'))
+        app._inject_text('hello', route='scratchpad', voice_plan=self.DictationPlan(route='scratchpad'))
         app._notify_capture.assert_called_once_with('hello', final=True)
 
     def test_stop_hands_the_plan_and_trimmed_audio_to_processing(self):
         app = self.delivery_app()
-        plan = self.DictationPlan(refine='off')
+        plan = self.DictationPlan(raw=True)
         app.is_recording = True
         app._voice_plan = plan
         app._recording_session = object()
@@ -377,6 +384,7 @@ class VoiceControlTests(unittest.TestCase):
         app = self.delivery_app()
         app.audio_capture = types.SimpleNamespace(sample_rate=16000)
         app._current_language_override = None
+        app._current_route = 'paste'
         app.whisper_manager.transcribe_audio.return_value = 'Note this down. Hey Mycroft.'
         app._finish_live_typing = mock.Mock(return_value=None)
         app._inject_text = mock.Mock(return_value=self.outcome.INJECTED)
@@ -384,10 +392,11 @@ class VoiceControlTests(unittest.TestCase):
             setattr(app, attr, mock.Mock())
         plan = self.DictationPlan()
         self.App._process_audio(app, np.zeros(10), voice_plan=plan, end_phrase='hey mycroft')
-        app._inject_text.assert_called_once_with('Note this down.', voice_plan=plan)
+        app._inject_text.assert_called_once_with('Note this down.', route='paste', voice_plan=plan)
 
     def test_voice_dictations_never_type_live(self):
         app = self.delivery_app(realtime_live_typing=True)
+        app._current_route = 'paste'
         app.whisper_manager.realtime_live_typing_supported.return_value = True
         self.assertTrue(app._live_typing_eligible())
         app._voice_plan = self.DictationPlan()

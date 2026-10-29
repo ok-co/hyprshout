@@ -14,11 +14,16 @@ class RecordingControlServer:
     """Own the recording-control FIFO and single-subscriber capture socket."""
 
     _VALID_COMMANDS = {
-        "start", "stop", "release", "cancel", "submit", "model_unload", "model_reload",
+        "start", "translate", "scratchpad", "stop", "release", "cancel", "submit", "model_unload",
+        "model_reload",
     }
+    _START_VERBS = ("start", "translate", "scratchpad")
+    _SCRATCHPAD_REQUESTS = (
+        "scratchpad_show", "scratchpad_paste", "scratchpad_copy", "scratchpad_clear", "scratchpad_undo",
+    )
 
     def __init__(self, fifo_path, socket_path, on_command, is_recording,
-                 on_file_transcribe=None, on_recover=None, on_diagnostics=None):
+                 on_file_transcribe=None, on_recover=None, on_diagnostics=None, on_scratchpad=None):
         self.fifo_path = Path(fifo_path)
         self.socket_path = Path(socket_path)
         self._on_command = on_command
@@ -26,6 +31,7 @@ class RecordingControlServer:
         self._on_file_transcribe = on_file_transcribe
         self._on_recover = on_recover
         self._on_diagnostics = on_diagnostics
+        self._on_scratchpad = on_scratchpad
 
         self._lifecycle_lock = threading.Lock()
         self._stop_event = None
@@ -41,15 +47,20 @@ class RecordingControlServer:
 
     @classmethod
     def parse_commands(cls, raw_data):
-        """Return the last valid ``(action, language)`` command, if any."""
+        """Return the last valid ``(action, language)`` command, if any.
+
+        ``translate`` and ``scratchpad`` start like ``start`` and also take
+        ``:<language>``.
+        """
         parsed = []
         for line in (line.strip() for line in raw_data.splitlines()):
             if not line:
                 continue
             lower = line.lower()
-            if lower.startswith("start:"):
+            verb = lower.split(":", 1)[0]
+            if ":" in lower and verb in cls._START_VERBS:
                 language = line.split(":", 1)[1].strip() or None
-                parsed.append(("start", language))
+                parsed.append((verb, language))
             elif lower in cls._VALID_COMMANDS:
                 parsed.append((lower, None))
         return parsed[-1] if parsed else None
@@ -496,6 +507,19 @@ class RecordingControlServer:
                 ok, payload = self._on_recover(request['verb'])
                 response = {'ok': bool(ok)}
                 response['message' if ok else 'error'] = str(payload)
+            elif isinstance(request, dict) and request.get('verb') in self._SCRATCHPAD_REQUESTS:
+                if stop_event.is_set() or stop_event is not self._stop_event:
+                    raise RuntimeError('daemon is shutting down')
+                if self._on_scratchpad is None:
+                    raise RuntimeError('the scratchpad is unavailable; update or restart the daemon')
+                ok, payload = self._on_scratchpad(request['verb'])
+                response = {'ok': bool(ok)}
+                if not ok:
+                    response['error'] = str(payload)
+                elif request['verb'] == 'scratchpad_show':
+                    response['text'] = str(payload)
+                else:
+                    response['message'] = str(payload)
             else:
                 if not isinstance(request, dict) or request.get('verb') != 'transcribe_file':
                     raise ValueError('unknown request')

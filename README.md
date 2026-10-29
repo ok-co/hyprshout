@@ -29,7 +29,8 @@ https://github.com/user-attachments/assets/4c223e85-2916-494f-b7b1-766ce1bdc991
 - **GPU memory efficient** - Limit or zero memory usage easily, more for other local models
 - **onnx-asr for wild CPU speeds** - No GPU? Optimized for great speed on any hardware
 - **Strong CJK** - Qwen3-ASR for Chinese, Japanese and Korean
-- **Translation** - Translate non-English to English with a single config
+- **Translation** - Translate non-English to English with a single config, or into any language on its own hotkey via an LLM
+- **Scratchpad** - Draft a prompt over several dictations, say what to change, paste it when it's ready
 - **REST API or websockets** - Secure, fast wires to top clouds like Gemini, ElevenLabs
 - **Live streaming** - Self-host NeMo or Phonon: watch words form, or type as you speak (experimental)
 - **Themed visualizer** - Visualizes your voice, will automatch Omarchy and Noctalia themes

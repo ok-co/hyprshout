@@ -15,7 +15,7 @@ import ast
 import math
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Optional, Dict, Any, List, Tuple
 
 try:
     from .service_log import log
@@ -1501,25 +1501,21 @@ except Exception:
             if self._stream is session:
                 self._stream = None
 
-    def inject_text(self, text: str, refine: Optional[Callable[[str], str]] = None) -> InjectionOutcome:
+    def inject_text(self, text: str, translate: bool = False, raw: bool = False,
+                    translate_language: Optional[str] = None) -> InjectionOutcome:
         """Prepare, retain and deliver one dictation at a time.
 
-        refine replaces the configured LLM pass for this dictation (voice
-        control turns it off or translates instead).
+        translate=True sends it through the LLM to llm_translate_language
+        (or translate_language), whether or not llm_refine_enabled is on.
+        raw=True skips the LLM refinement of an untranslated dictation.
         """
         if self.stream_busy():
             return InjectionOutcome.FAILED
         with self._delivery_lock:
             if self.stream_busy():
                 return InjectionOutcome.FAILED
-            return self._prepare_and_inject_text(text, refine)
-
-    def prepare_text(self, text: str, refine: Optional[Callable[[str], str]] = None) -> str:
-        """Preprocess and refine a dictation without hooks or delivery; '' when nothing is left."""
-        processed = self._preprocess_text(text or '').strip()
-        if not processed:
-            return ''
-        return (refine or self._refine_with_llm)(processed).strip()
+            return self._prepare_and_inject_text(
+                text, translate=translate, raw=raw, translate_language=translate_language)
 
     def inject_stream_chunk(self, session: _StreamSession, text: str, final: bool = False) -> InjectionOutcome:
         """Deliver one chunk of a dictation typed while recording.
@@ -1710,12 +1706,46 @@ except Exception:
         finally:
             self._delivery_lock.release()
 
-    def _prepare_and_inject_text(self, text: str, refine=None) -> InjectionOutcome:
+    def deliver_prepared(self, text, action):
+        """Paste or copy finished text (the scratchpad draft) exactly as given.
+
+        No preprocessing, LLM pass, hook or auto-submit Enter: the text is
+        already final, and a prompt is reviewed in the target before it is
+        sent. A paste is retained for copy-last/paste-last like a dictation.
+        """
+        if action not in ('copy', 'paste'):
+            return False, 'Unknown delivery action'
+        if self.stream_busy() or not self._delivery_lock.acquire(blocking=False):
+            return False, 'Text delivery is busy; try again when it finishes'
+        try:
+            if self.stream_busy():
+                return False, 'Text delivery is busy; try again when it finishes'
+            if action == 'copy':
+                ok = self._copy_text_to_clipboard(text)
+                return ok, ('Copied' if ok else 'Could not copy to the clipboard')
+            ok = self._inject_via_clipboard_and_hotkey(text, auto_submit=False, retain=True,
+                                                       clipboard_only=True)
+            return ok, ('Paste dispatched' if ok else 'Could not paste; try hyprwhspr record copy-last')
+        except Exception:
+            return False, 'Could not deliver the text; check clipboard and paste tools'
+        finally:
+            self._delivery_lock.release()
+
+    def retain_text(self, text):
+        """Keep text for copy-last/paste-last without delivering it."""
+        with self._last_text_lock:
+            self._last_text = text
+
+    def _prepare_and_inject_text(self, text: str, translate: bool = False, raw: bool = False,
+                                 translate_language: Optional[str] = None) -> InjectionOutcome:
         """
         Inject text into the currently focused application
 
         Args:
             text: Text to inject
+            translate: Translate it with the LLM before the hook and paste
+            raw: Skip LLM refinement (a translation still runs)
+            translate_language: Target for this dictation instead of llm_translate_language
 
         Returns:
             InjectionOutcome.INJECTED if pasted, CONSUMED if a post-transcription
@@ -1733,7 +1763,9 @@ except Exception:
         if not processed_text.strip():
             log("No text to inject (empty after preprocessing)")
             return InjectionOutcome.INJECTED
-        processed_text = (refine or self._refine_with_llm)(processed_text)
+        if translate or not raw:
+            processed_text = self._refine_with_llm(processed_text, translate=translate,
+                                                   translate_language=translate_language)
         hook_result = self._run_post_transcription_hook(processed_text)
         if hook_result.outcome == _PostTranscriptionHookOutcome.CONSUME:
             return InjectionOutcome.CONSUMED
@@ -1779,27 +1811,38 @@ except Exception:
         """
         return preprocess_text(text, self.config_manager)
 
-    def _refine_with_llm(self, text: str) -> str:
+    def _refine_with_llm(self, text: str, translate: bool = False,
+                         translate_language: Optional[str] = None) -> str:
         """Rewrite the dictation with the configured LLM (llm_refine_*).
 
-        Any failure keeps the original text; the log carries the reason, never
-        the dictation itself.
+        translate=True runs the pass even with llm_refine_enabled off, and
+        translates into llm_translate_language, or translate_language when
+        given. Any failure keeps the original text; the log carries the
+        reason, never the dictation itself.
         """
         if not (self.config_manager and text):
             return text
         get_setting = self.config_manager.get_setting
-        if not llm_refiner.is_enabled(get_setting):
+        if translate and translate_language:
+            configured = get_setting
+
+            def get_setting(key, default=None):
+                return translate_language if key == 'llm_translate_language' else configured(key, default)
+        if not (translate or llm_refiner.is_enabled(get_setting)):
             return text
+        action = 'Translation' if translate else 'Refinement'
         started = time.monotonic()
         try:
-            refined = llm_refiner.refine_text(text, get_setting)
+            refined = llm_refiner.refine_text(text, get_setting, translate=translate)
         except llm_refiner.LLMRefineError as e:
-            log(f"[LLM] Refinement failed, pasting original text: {e}")
+            log(f"[LLM] {action} failed, pasting original text: {e}")
             return text
         except Exception as e:
-            log(f"[LLM] Refinement failed, pasting original text: {type(e).__name__}")
+            log(f"[LLM] {action} failed, pasting original text: {type(e).__name__}")
             return text
-        log(f"[LLM] Refined dictation in {time.monotonic() - started:.1f}s "
+        done = (f"Translated dictation into {llm_refiner.translate_language(get_setting)}"
+                if translate else "Refined dictation")
+        log(f"[LLM] {done} in {time.monotonic() - started:.1f}s "
             f"({len(text)} -> {len(refined)} chars)")
         return refined
 
@@ -1847,9 +1890,13 @@ except Exception:
 
     def _inject_via_clipboard_and_hotkey(
         self, text: str, auto_submit: bool = True, retain: bool = False,
-        stream: Optional[_StreamSession] = None,
+        stream: Optional[_StreamSession] = None, clipboard_only: bool = False,
     ) -> bool:
-        """Copy text to clipboard, then trigger the compositor-native paste path."""
+        """Copy text to clipboard, then trigger the compositor-native paste path.
+
+        clipboard_only skips GNOME's direct typing, which types a line break
+        as Enter and would submit a multi-line text in a chat field.
+        """
         try:
             window_lookup_needed = self._active_window_lookup_needed()
             window_info = (
@@ -1899,6 +1946,7 @@ except Exception:
                 and self.ydotool_available
                 and app_match is None
                 and not self._has_custom_paste_keycode()
+                and not clipboard_only
                 and not self._force_clipboard_paste()
                 and text.isascii()
                 and self._layout_is_type_safe()

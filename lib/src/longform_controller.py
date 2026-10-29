@@ -59,6 +59,7 @@ class LongFormController:
 
         self.state = 'IDLE'
         self.language_override = None
+        self.route = 'paste'
         self.lock = threading.Lock()
         self.segment_manager = None
         self.auto_save_timer = None
@@ -72,11 +73,12 @@ class LongFormController:
         print("[LONGFORM] Segment manager initialized (lazy init)", flush=True)
         self.cleanup_temp_on_startup()
 
-    def primary_shortcut(self):
+    def primary_shortcut(self, route='paste'):
+        """Start, pause or resume; route applies only to a session it starts."""
         self.ensure_initialized()
         with self.lock:
             if self.state == 'IDLE':
-                self.start_recording()
+                self.start_recording(route=route)
             elif self.state == 'RECORDING':
                 self.pause_recording()
             elif self.state == 'PAUSED':
@@ -110,14 +112,14 @@ class LongFormController:
             elif self.state == 'PROCESSING':
                 print("[LONGFORM] Already processing, please wait")
 
-    def request_start(self, language_override=None):
+    def request_start(self, language_override=None, route='paste'):
         """Handle an external start command using long-form state semantics."""
         self.ensure_initialized()
         lang_info = f" (language: {language_override})" if language_override else ""
         with self.lock:
             if self.state == 'IDLE':
                 print(f"[CONTROL] Long-form start requested (immediate){lang_info}", flush=True)
-                self.start_recording(language_override=language_override)
+                self.start_recording(language_override=language_override, route=route)
             elif self.state == 'PAUSED':
                 print(f"[CONTROL] Long-form resume requested (immediate){lang_info}", flush=True)
                 self.resume_recording()
@@ -155,7 +157,7 @@ class LongFormController:
         self.release_recording()
         self.notify_capture("", final=True)
 
-    def start_recording(self, language_override=None):
+    def start_recording(self, language_override=None, route='paste'):
         # The backend is shared with file transcription and model loads, so a
         # session has to be claimed before any audio is captured for it
         if not self.claim_recording():
@@ -166,8 +168,9 @@ class LongFormController:
             return
 
         lang_info = f" (language: {language_override})" if language_override else ""
-        print(f"[LONGFORM] Starting recording session{lang_info}")
+        print(f"[LONGFORM] Starting recording session{lang_info}{f' ({route})' if route != 'paste' else ''}")
         self.language_override = language_override
+        self.route = route
 
         started = False
         try:
@@ -263,6 +266,7 @@ class LongFormController:
             self.segment_manager.clear_session()
             self.error_audio = None
             self.language_override = None
+            self.route = 'paste'
             self._set_state('IDLE')
             self.hide_mic_osd()
             self.write_recording_status(False)
@@ -340,13 +344,14 @@ class LongFormController:
                     self._submission_failed(audio_data)
                     return
 
-                if self.inject_text(text) == InjectionOutcome.FAILED:
+                if self.inject_text(text, route=self.route) == InjectionOutcome.FAILED:
                     self._submission_failed(audio_data)
                     return
 
                 self.segment_manager.clear_session()
                 self.error_audio = None
                 self.language_override = None
+                self.route = 'paste'
                 self._set_state('IDLE')
                 self.show_result_and_hide(True)
             else:

@@ -13,6 +13,12 @@ hyprwhspr record start --lang it    # Italian
 hyprwhspr record start --lang de    # German
 hyprwhspr record start --lang es    # Spanish
 
+# Start recording whose dictation the LLM translates (llm_translate_language)
+hyprwhspr record start --translate
+
+# Start recording whose dictation goes into the scratchpad draft instead of being pasted
+hyprwhspr record start --scratchpad
+
 # Stop recording (transcribes and pastes)
 hyprwhspr record stop
 
@@ -25,6 +31,8 @@ hyprwhspr record cancel
 # Toggle recording on/off
 hyprwhspr record toggle
 hyprwhspr record toggle --lang it   # Toggle with language override
+hyprwhspr record toggle --translate # Toggle a translated recording
+hyprwhspr record toggle --scratchpad # Toggle a recording into the scratchpad
 
 # Check current status
 hyprwhspr record status
@@ -62,6 +70,21 @@ hyprwhspr config llm forget-key
 ```
 
 See [LLM refinement](LLM_REFINEMENT.md).
+
+## Scratchpad
+
+```bash
+hyprwhspr scratchpad               # print the draft (scratchpad show)
+hyprwhspr scratchpad paste         # paste it into the focused app, without auto-submit
+hyprwhspr scratchpad copy          # copy it to the clipboard
+hyprwhspr scratchpad undo          # undo the last change
+hyprwhspr scratchpad clear
+hyprwhspr scratchpad edit          # open it in $EDITOR
+hyprwhspr scratchpad status
+hyprwhspr config llm test --scratchpad "text"   # try an edit on a copy of the draft
+```
+
+See [Scratchpad](SCRATCHPAD.md).
 
 ## File transcription
 

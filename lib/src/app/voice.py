@@ -3,8 +3,9 @@
 The start word opens a quiet command session: the wake word stream itself
 keeps the audio (no recorder, OSD, ducking or paste) until the end word. The
 command is transcribed with the loaded backend and a decision model picks one
-action (voice_command.ACTIONS). Dictation actions start a normal recording
-carrying a DictationPlan, which the end word stops like any other recording.
+action (voice_command.ACTIONS). Dictation actions start a normal recording on
+the plan's route (paste, translate, scratchpad), which the end word stops like
+any other recording; scratchpad and last-dictation actions run at once.
 
 Manual control always wins: a hotkey or CLI start cancels a pending command,
 and the cancel shortcut or command cancels it too.
@@ -13,13 +14,12 @@ and the cancel shortcut or command cancels it too.
 import threading
 import time
 
-from paths import MODEL_UNLOADED_FILE, SCRATCHPAD_FILE
+from paths import MODEL_UNLOADED_FILE
 from service_log import log
 from backend_utils import normalize_backend
 from hallucination import is_hallucination
-from text_injector import InjectionOutcome
 import voice_command
-from voice_command import DecisionError, append_to_scratchpad, phrase_for, plan_for, strip_wake_phrase
+from voice_command import SCRATCHPAD_ACTIONS, DecisionError, phrase_for, plan_for, strip_wake_phrase
 from wake_word import SAMPLE_RATE, WakeWordError, WakeWordListener, normalize_word
 
 DEFAULT_START_WORD = 'hey_jarvis'
@@ -210,17 +210,22 @@ class VoiceControlMixin:
         log(f"[VOICE] Decision: {decision.action} ({decision.confidence:.2f})"
             + (f", speak {decision.spoken_language}" if decision.spoken_language else "")
             + (f", into {decision.target_language}" if decision.target_language else ""))
-        default_target = self.config.get_setting('voice_control_translation_language', 'en') or 'en'
-        plan = plan_for(decision, default_target)
+        plan = plan_for(decision)
         if plan is not None:
-            self._start_recording(language_override=decision.spoken_language, voice_plan=plan)
-        elif decision.action in ('paste_last', 'copy_last'):
+            self._start_recording(language_override=decision.spoken_language, route=plan.route,
+                                  voice_plan=plan)
+            return
+        if decision.action in ('paste_last', 'copy_last'):
             ok, message = self._handle_recovery(decision.action)
-            if not ok:
-                self._notify_user("hyprwhspr", message, urgency="normal")
-        elif decision.uncertain:
-            self.audio_manager.play_error_sound()
-            self._notify_user("hyprwhspr", f"Didn't understand: {text}", urgency="low")
+        elif decision.action in SCRATCHPAD_ACTIONS:
+            ok, message = self._handle_scratchpad_request(decision.action)
+        else:
+            if decision.uncertain:
+                self.audio_manager.play_error_sound()
+                self._notify_user("hyprwhspr", f"Didn't understand: {text}", urgency="low")
+            return
+        if not ok:
+            self._notify_user("hyprwhspr", message, urgency="normal")
 
     def _voice_cue(self, kind):
         if self.config.get_setting('voice_control_cues', True):
@@ -228,37 +233,14 @@ class VoiceControlMixin:
 
     # ------------------------ Voice-started dictation delivery ------------------------
 
-    def _voice_refine(self, plan):
-        """The refine step a plan asks for; None keeps the configured one."""
-        if plan is None or plan.refine == 'default':
-            return None
-        if plan.refine == 'off':
-            return lambda text: text
-
-        def translate(text):
-            started = time.monotonic()
-            try:
-                translated = voice_command.translate_text(text, plan.target_language, self.config.get_setting)
-            except Exception as e:
-                log(f"[VOICE] Translation failed, keeping the original text: {e}")
-                self._notify_user("hyprwhspr", "Translation failed - kept the original text", urgency="normal")
-                return text
-            log(f"[VOICE] Translated into {plan.target_language} in {time.monotonic() - started:.1f}s")
-            return translated
-        return translate
-
-    def _save_to_scratchpad(self, text, plan):
-        path = self.config.get_setting('voice_control_scratchpad_file', None) or SCRATCHPAD_FILE
-        try:
-            prepared = self.text_injector.prepare_text(text, refine=self._voice_refine(plan))
-            if not prepared:
-                log("[VOICE] Nothing to save after preprocessing")
-                return InjectionOutcome.INJECTED
-            saved = append_to_scratchpad(prepared, path)
-        except Exception as e:
-            log(f"[VOICE] Scratchpad save failed: {e}")
-            self._notify_user("hyprwhspr", f"Could not save to the scratchpad: {e}", urgency="normal")
-            return InjectionOutcome.FAILED
-        log(f"[VOICE] Saved {len(prepared)} chars to {saved}")
-        self._notify_user("hyprwhspr", "Saved to scratchpad", urgency="low")
-        return InjectionOutcome.CONSUMED
+    @staticmethod
+    def _voice_delivery_options(plan):
+        """TextInjector.inject_text options a voice plan adds to its route."""
+        if plan is None:
+            return {}
+        options = {}
+        if plan.raw:
+            options['raw'] = True
+        if plan.translate_language:
+            options['translate_language'] = plan.translate_language
+        return options

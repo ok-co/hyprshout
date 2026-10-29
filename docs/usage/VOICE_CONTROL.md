@@ -5,8 +5,9 @@ reads the command and picks what happens next:
 
 - **Dictate**: start a dictation, pasted as usual
 - **Dictate raw**: a dictation pasted exactly as spoken, without [LLM refinement](LLM_REFINEMENT.md)
-- **Translate**: a dictation translated into another language before it's pasted
-- **Scratchpad**: a dictation saved to a notes file instead of pasted
+- **Translate**: a dictation [translated](LLM_REFINEMENT.md#translation) before it's pasted
+- **Scratchpad**: a dictation into the [scratchpad](SCRATCHPAD.md) draft
+- **Draft**: paste, copy, undo or clear the scratchpad draft
 - **Paste last** / **copy last**: deliver the previous dictation again
 
 A dictation started this way ends when you say the end word. The end word also stops any recording you started
@@ -98,19 +99,21 @@ Say what you want in your own words; these are examples.
 | "dictate in German" | dictation in that language (it must be in `voice_control_languages`) |
 | "type exactly what I say", "raw" | dictation without LLM refinement |
 | "translate into French", "in Spanish please" | dictation translated before pasting |
-| "take a note", "remember this" | dictation saved to the scratchpad |
+| "take a note", "add to the draft", "edit the draft" | dictation into the scratchpad draft |
+| "send the draft" / "copy the draft" | the draft, pasted or copied |
+| "undo that" / "clear the draft" | the draft's last change undone, or the draft cleared |
 | "paste that again" / "copy the last one" | the previous dictation |
 | "never mind", "cancel" | nothing |
 
 A command the model isn't sure about shows "Didn't understand" with what it heard.
 
-**Translation** uses your [LLM refinement](LLM_REFINEMENT.md) provider and model with a translation prompt, whether
-or not refinement is enabled. A translate command that names no language uses `voice_control_translation_language`.
-If the translation fails, the original text is pasted.
+**Translation** works like the [translate shortcut](LLM_REFINEMENT.md#translation): the LLM translates the
+dictation, whether or not refinement is enabled, and the original is pasted if it fails. A command that names a
+language ("translate into French") translates into that one; otherwise `llm_translate_language` applies.
 
-**The scratchpad** is `~/.local/share/hyprwhspr/scratchpad.md` unless `voice_control_scratchpad_file` says
-otherwise. Each note is appended under a timestamp, after the usual [text processing](TEXT_PROCESSING.md) and LLM
-refinement.
+**Scratchpad** dictations edit the [draft](SCRATCHPAD.md) exactly like the scratchpad shortcut: new content is
+added, an instruction about the draft changes it, and nothing is pasted until you say "send the draft" (or use
+the paste shortcut). Draft actions report failures, such as an empty draft, in a notification.
 
 ## Manual control wins
 
@@ -137,9 +140,7 @@ stays off for them.
     "voice_control_decision_endpoint": "https://openrouter.ai/api/alpha/decisions",
     "voice_control_decision_timeout": 10,         // seconds
     "voice_control_min_confidence": 0.5,          // below this: "Didn't understand"
-    "voice_control_languages": ["en", "de", "fr", "es", "it", "pt", "nl", "pl"],
-    "voice_control_translation_language": "en",
-    "voice_control_scratchpad_file": null         // null = ~/.local/share/hyprwhspr/scratchpad.md
+    "voice_control_languages": ["en", "de", "fr", "es", "it", "pt", "nl", "pl"]  // languages a command can name
 }
 ```
 

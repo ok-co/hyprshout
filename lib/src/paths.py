@@ -37,6 +37,7 @@ LOCK_FILE = RUNTIME_DIR / 'hyprwhspr.lock'
 VISUALIZER_STATE_FILE = RUNTIME_DIR / 'visualizer_state'  # recording|paused|processing|error|success
 TRANSCRIPT_PREVIEW_FILE = RUNTIME_DIR / 'transcript_preview'
 MIC_OSD_LEVEL_FEED_FILE = RUNTIME_DIR / 'mic_osd_level_feed'
+SCRATCHPAD_FILE = RUNTIME_DIR / 'scratchpad.md'  # Scratchpad draft (scratchpad.py)
 
 # Secure credential storage
 CREDENTIALS_DIR = DATA_DIR
@@ -55,6 +56,5 @@ MODEL_UNLOADED_FILE = RUNTIME_DIR / 'model_unloaded'
 # Recent raw recordings, kept when 'debug_recordings' is on
 DEBUG_RECORDINGS_DIR = RUNTIME_DIR / 'recordings'
 
-# Voice control: downloaded openWakeWord models and the default scratchpad
+# Voice control: downloaded openWakeWord models
 WAKEWORD_MODELS_DIR = DATA_DIR / 'wakeword'
-SCRATCHPAD_FILE = DATA_DIR / 'scratchpad.md'

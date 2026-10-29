@@ -73,6 +73,7 @@ class DebugRecordingsTests(unittest.TestCase):
         app._recording_session = object()
         app.is_recording = True
         app._current_language_override = None
+        app._current_route = 'paste'
         app._continuous_flush_lock = threading.Lock()
         app._continuous_transcription_done = threading.Event()
         app._is_zero_volume = mock.Mock(return_value=False)

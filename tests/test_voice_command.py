@@ -1,8 +1,6 @@
-import datetime
 import io
 import json
 import sys
-import tempfile
 import unittest
 import urllib.error
 from pathlib import Path
@@ -13,8 +11,8 @@ sys.path.insert(0, str(ROOT / "lib" / "src"))
 
 import voice_command  # noqa: E402
 from voice_command import (  # noqa: E402
-    ACTIONS, DecisionError, DictationPlan, VoiceDecision, append_to_scratchpad, build_request,
-    decide, parse_response, phrase_for, plan_for, strip_wake_phrase, translate_text,
+    ACTIONS, SCRATCHPAD_ACTIONS, DecisionError, DictationPlan, VoiceDecision, build_request,
+    decide, parse_response, phrase_for, plan_for, strip_wake_phrase,
 )
 from text_injector import InjectionOutcome, _PostTranscriptionHookOutcome  # noqa: E402
 
@@ -155,16 +153,20 @@ class DecideTests(unittest.TestCase):
 
 
 class PlanTests(unittest.TestCase):
-    def test_dictation_actions_map_to_plans(self):
+    def test_dictation_actions_map_to_routes(self):
         self.assertEqual(plan_for(VoiceDecision("dictate", 1.0)), DictationPlan())
-        self.assertEqual(plan_for(VoiceDecision("dictate_raw", 1.0)), DictationPlan(refine="off"))
-        self.assertEqual(plan_for(VoiceDecision("scratchpad", 1.0)), DictationPlan(output="scratchpad"))
-        self.assertIsNone(plan_for(VoiceDecision("paste_last", 1.0)))
-        self.assertIsNone(plan_for(VoiceDecision("nothing", 1.0)))
+        self.assertEqual(plan_for(VoiceDecision("dictate_raw", 1.0)), DictationPlan(raw=True))
+        self.assertEqual(plan_for(VoiceDecision("translate", 1.0)), DictationPlan(route="translate"))
+        self.assertEqual(plan_for(VoiceDecision("scratchpad", 1.0)), DictationPlan(route="scratchpad"))
+        for action in ("paste_last", "copy_last", "nothing") + SCRATCHPAD_ACTIONS:
+            self.assertIsNone(plan_for(VoiceDecision(action, 1.0)), action)
 
-    def test_translation_targets_the_named_or_default_language(self):
-        self.assertEqual(plan_for(VoiceDecision("translate", 1.0, target_language="de")).target_language, "de")
-        self.assertEqual(plan_for(VoiceDecision("translate", 1.0), "fr").target_language, "fr")
+    def test_a_named_translation_language_overrides_the_configured_one(self):
+        plan = plan_for(VoiceDecision("translate", 1.0, target_language="de"))
+        self.assertEqual(plan, DictationPlan(route="translate", translate_language="German"))
+
+    def test_scratchpad_actions_are_offered_to_the_model(self):
+        self.assertTrue(set(SCRATCHPAD_ACTIONS) <= set(ACTIONS))
 
 
 class TranscriptHelperTests(unittest.TestCase):
@@ -185,46 +187,38 @@ class TranscriptHelperTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(strip_wake_phrase(text, start, end), expected)
 
-    def test_scratchpad_entries_are_appended_with_a_timestamp(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "notes" / "scratch.md"
-            append_to_scratchpad(" first ", path, now=datetime.datetime(2026, 10, 29, 9, 5))
-            append_to_scratchpad("second", path, now=datetime.datetime(2026, 10, 29, 9, 6))
-            self.assertEqual(path.read_text(encoding="utf-8"),
-                             "## 2026-10-29 09:05\n\nfirst\n\n## 2026-10-29 09:06\n\nsecond\n\n")
 
-    def test_translation_swaps_only_the_prompt(self):
-        refine = mock.Mock(return_value="Hallo")
-        get = settings(llm_refine_model="m", llm_refine_prompt="clean", llm_refine_extra_instructions="x",
-                       llm_refine_prompt_file="/p")
-        self.assertEqual(translate_text("hello", "de", get, refine=refine), "Hallo")
-        translated = refine.call_args.args[1]
-        self.assertIn("into German", translated("llm_refine_prompt"))
-        self.assertIsNone(translated("llm_refine_prompt_file"))
-        self.assertIsNone(translated("llm_refine_extra_instructions"))
-        self.assertEqual(translated("llm_refine_model"), "m")
-
-
-class InjectorRefineOverrideTests(unittest.TestCase):
-    def test_refine_override_replaces_the_configured_pass(self):
+class InjectorVoiceOptionTests(unittest.TestCase):
+    def inject(self, settings, **options):
         injector = make_injector()
-        injector.config_manager = ConfigStub({"llm_refine_enabled": True, "append_trailing_space": False})
+        injector.config_manager = ConfigStub({"append_trailing_space": False, **settings})
         preserved = lambda text: mock.Mock(outcome=_PostTranscriptionHookOutcome.PRESERVE, text=text)
-        with mock.patch("text_injector.llm_refiner.refine_text") as llm, \
+        with mock.patch("text_injector.llm_refiner.refine_text", return_value="REFINED") as llm, \
                 mock.patch.object(injector, "_run_post_transcription_hook", side_effect=preserved), \
-                mock.patch.object(injector, "_inject_via_clipboard_and_hotkey", return_value=True) as inject:
-            outcome = injector.inject_text("hello there", refine=lambda text: text.upper())
-        self.assertEqual(outcome, InjectionOutcome.INJECTED)
-        llm.assert_not_called()
-        inject.assert_called_once_with("HELLO THERE", retain=True)
+                mock.patch.object(injector, "_inject_via_clipboard_and_hotkey", return_value=True) as paste:
+            self.assertEqual(injector.inject_text("hello there", **options), InjectionOutcome.INJECTED)
+        return llm, paste
 
-    def test_prepare_text_preprocesses_and_refines_without_delivery(self):
-        injector = make_injector()
-        injector.config_manager = ConfigStub({"llm_refine_enabled": False})
-        with mock.patch.object(injector, "_inject_via_clipboard_and_hotkey") as inject:
-            self.assertEqual(injector.prepare_text("  note this  ", refine=lambda t: t + "!"), "note this!")
-            self.assertEqual(injector.prepare_text("   "), "")
-        inject.assert_not_called()
+    def test_raw_skips_refinement(self):
+        llm, paste = self.inject({"llm_refine_enabled": True}, raw=True)
+        llm.assert_not_called()
+        paste.assert_called_once_with("hello there", retain=True)
+
+    def test_raw_still_translates(self):
+        llm, paste = self.inject({"llm_refine_enabled": False}, translate=True, raw=True)
+        llm.assert_called_once()
+        paste.assert_called_once_with("REFINED", retain=True)
+
+    def test_translate_language_overrides_the_configured_target(self):
+        llm, _paste = self.inject({"llm_translate_language": "English"}, translate=True,
+                                  translate_language="German")
+        get_setting = llm.call_args.args[1]
+        self.assertEqual(get_setting("llm_translate_language"), "German")
+        self.assertTrue(llm.call_args.kwargs["translate"])
+
+    def test_without_options_the_configured_target_applies(self):
+        llm, _paste = self.inject({"llm_translate_language": "French"}, translate=True)
+        self.assertEqual(llm.call_args.args[1]("llm_translate_language"), "French")
 
 
 if __name__ == "__main__":

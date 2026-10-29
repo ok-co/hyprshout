@@ -48,6 +48,21 @@
       "default": null,
       "description": "Language code for secondary shortcut (e.g., 'it', 'en', 'fr')"
     },
+    "translate_shortcut": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Optional hotkey that records like primary_shortcut and has the LLM translate the dictation into llm_translate_language before paste (e.g., 'SUPER+ALT+T'). Uses the llm_refine_* provider settings, whether or not llm_refine_enabled is on."
+    },
+    "scratchpad_shortcut": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Optional hotkey that records like primary_shortcut and has the LLM apply the dictation to the scratchpad draft instead of pasting it: new text is added, an instruction about the draft ('change X to Y', 'drop the last point') edits it (e.g., 'SUPER+ALT+S'). Uses the llm_refine_* provider settings, whether or not llm_refine_enabled is on."
+    },
+    "scratchpad_paste_shortcut": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Optional hotkey that pastes the scratchpad draft into the focused app when released, without auto-submit (e.g., 'SUPER+ALT+P')."
+    },
     "cancel_shortcut": {
       "type": ["string", "null"],
       "default": null,
@@ -266,10 +281,33 @@
       "default": 15,
       "description": "Seconds to wait for the LLM. On timeout or any error the original text is pasted."
     },
+    "llm_translate_language": {
+      "type": "string",
+      "minLength": 1,
+      "default": "English",
+      "description": "Language the LLM translates into for translate_shortcut and 'hyprwhspr record start/toggle --translate', given as a name or code (e.g. 'English', 'German', 'pt-BR'). Other dictations are not translated."
+    },
+    "scratchpad_model": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Model for scratchpad edits, on the llm_refine_* provider. Null = llm_refine_model (or the provider default)."
+    },
+    "scratchpad_timeout": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 300,
+      "default": 30,
+      "description": "Seconds to wait for one scratchpad edit. The LLM rewrites the whole draft, so this is longer than llm_refine_timeout. On timeout or any error the draft is kept unchanged."
+    },
+    "scratchpad_clear_on_paste": {
+      "type": "boolean",
+      "default": true,
+      "description": "Empty the scratchpad draft once it is pasted. 'hyprwhspr scratchpad undo' restores it."
+    },
     "voice_control_enabled": {
       "type": "boolean",
       "default": false,
-      "description": "Hands-free control by voice. The start word opens a quiet command session, the end word closes it, and a decision model picks what happens next: a dictation (pasted, raw, translated or saved to the scratchpad) or paste/copy of the last dictation. The end word also stops any running recording. Needs openWakeWord in the service's Python, an OpenRouter API key ('hyprwhspr config llm'), PipeWire or PulseAudio, and a local or REST backend; not available in long_form mode."
+      "description": "Hands-free control by voice. The start word opens a quiet command session, the end word closes it, and a decision model picks what happens next: a dictation (pasted, raw, translated, or applied to the scratchpad draft), a scratchpad operation (paste, copy, undo, clear) or paste/copy of the last dictation. The end word also stops any running recording. Needs openWakeWord in the service's Python, an OpenRouter API key ('hyprwhspr config llm'), PipeWire or PulseAudio, and a local or REST backend; not available in long_form mode."
     },
     "voice_control_start_word": {
       "type": "string",
@@ -333,24 +371,13 @@
       "minimum": 0,
       "maximum": 1,
       "default": 0.5,
-      "description": "Decisions less confident than this count as not understood; language picks below it fall back to automatic detection or voice_control_translation_language."
+      "description": "Decisions less confident than this count as not understood; language picks below it fall back to automatic detection or llm_translate_language."
     },
     "voice_control_languages": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
       "default": ["en", "de", "fr", "es", "it", "pt", "nl", "pl"],
       "description": "Language codes a command can name, as the language to dictate in or to translate into. Empty: commands never set a language."
-    },
-    "voice_control_translation_language": {
-      "type": "string",
-      "minLength": 1,
-      "default": "en",
-      "description": "Language a translate command uses when it names none."
-    },
-    "voice_control_scratchpad_file": {
-      "type": ["string", "null"],
-      "default": null,
-      "description": "File scratchpad dictations are appended to, one timestamped entry each. Null uses ~/.local/share/hyprwhspr/scratchpad.md."
     },
     "clipboard_behavior": {
       "type": "boolean",

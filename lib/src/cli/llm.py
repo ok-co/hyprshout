@@ -29,10 +29,20 @@ except ImportError:
 
 try:
     from ..llm_refiner import (DEFAULT_PROMPT, DEFAULT_PROVIDER, LLM_PROVIDERS, LLMRefineError,
-                               refine_text, resolve_target)
+                               edit_draft, refine_text, resolve_target, translate_language)
 except ImportError:
     from llm_refiner import (DEFAULT_PROMPT, DEFAULT_PROVIDER, LLM_PROVIDERS, LLMRefineError,
-                             refine_text, resolve_target)
+                             edit_draft, refine_text, resolve_target, translate_language)
+
+try:
+    from ..paths import SCRATCHPAD_FILE
+except ImportError:
+    from paths import SCRATCHPAD_FILE
+
+try:
+    from ..scratchpad import Scratchpad
+except ImportError:
+    from scratchpad import Scratchpad
 
 try:
     from ..output_control import log_info, log_success, log_warning, log_error
@@ -49,10 +59,13 @@ DEFAULT_PROMPT_FILE = USER_CONFIG_DIR / 'llm_prompt.md'
 SAMPLE_TEXT = ("so um I wanted to ask if we can move the meeting to Tuesday, no wait, "
                "Wednesday at at three, and uh could you also could you also bring the the slides")
 
+SCRATCHPAD_SAMPLE_TEXT = "um add that it should also handle empty input, and uh make the first sentence shorter"
+
 RESTART_HINT = "  systemctl --user restart hyprwhspr"
 
 
-def llm_command(action: Optional[str] = None, text: Optional[str] = None):
+def llm_command(action: Optional[str] = None, text: Optional[str] = None, translate: bool = False,
+                scratchpad: bool = False):
     """Handle config llm subcommands"""
     action = action or 'setup'
     if action == 'setup':
@@ -60,7 +73,7 @@ def llm_command(action: Optional[str] = None, text: Optional[str] = None):
     elif action == 'status':
         show_llm_status()
     elif action == 'test':
-        if not test_llm(text):
+        if not (test_scratchpad_edit(text) if scratchpad else test_llm(text, translate=translate)):
             sys.exit(1)
     elif action == 'prompt':
         edit_llm_prompt()
@@ -212,9 +225,12 @@ def show_llm_status():
     if extra.strip():
         print(f"Extra:         {extra.strip()}")
     print(f"Timeout:       {config.get_setting('llm_refine_timeout', 15)}s")
+    translate_key = config.get_setting('translate_shortcut', None)
+    print(f"Translate to:  {translate_language(config.get_setting)} "
+          f"(translate_shortcut: {translate_key or 'not set'})")
 
 
-def test_llm(text: Optional[str] = None, config=None) -> bool:
+def test_llm(text: Optional[str] = None, config=None, translate: bool = False) -> bool:
     """Run text (argument, piped stdin, or a sample) through the configured LLM"""
     config = config or ConfigManager(verbose=False)
     if text is None and not sys.stdin.isatty():
@@ -223,14 +239,34 @@ def test_llm(text: Optional[str] = None, config=None) -> bool:
     print(f"\nInput:  {text}")
     started = time.monotonic()
     try:
-        result = refine_text(text, config.get_setting)
+        result = refine_text(text, config.get_setting, translate=translate)
     except LLMRefineError as e:
-        log_error(f"LLM refinement failed: {e}")
+        log_error(f"LLM {'translation' if translate else 'refinement'} failed: {e}")
         return False
     print(f"Output: {result}")
     log_info(f"Took {time.monotonic() - started:.1f}s")
-    if config.get_setting('llm_refine_enabled', False) is not True:
+    if not translate and config.get_setting('llm_refine_enabled', False) is not True:
         log_info("Refinement is disabled; run 'hyprwhspr config llm' to enable it")
+    return True
+
+
+def test_scratchpad_edit(text: Optional[str] = None, config=None, scratchpad=None) -> bool:
+    """Apply text to a copy of the current scratchpad draft; the draft is not changed"""
+    config = config or ConfigManager(verbose=False)
+    if text is None and not sys.stdin.isatty():
+        text = sys.stdin.read()
+    text = (text or '').strip() or SCRATCHPAD_SAMPLE_TEXT
+    draft = (scratchpad or Scratchpad(SCRATCHPAD_FILE)).read()
+    print(f"\nDraft:     {draft or '(empty)'}")
+    print(f"Dictation: {text}")
+    started = time.monotonic()
+    try:
+        result = edit_draft(draft, text, config.get_setting)
+    except LLMRefineError as e:
+        log_error(f"Scratchpad edit failed: {e}")
+        return False
+    print(f"Result:    {result or '(empty)'}")
+    log_info(f"Took {time.monotonic() - started:.1f}s; the draft itself was not changed")
     return True
 
 

@@ -52,6 +52,15 @@ class ValidationTests(unittest.TestCase):
             self.assertEqual(list(Path(tmp).iterdir()), [path])
             return result
 
+    def test_scratchpad_shortcut_without_a_key_is_flagged(self):
+        with mock.patch.object(diag, 'get_credential', return_value=None):
+            _, findings, _ = self.validate({'scratchpad_shortcut': 'SUPER+ALT+S'})
+            key = [f for f in findings if f['check_id'] == 'config.llm_refine_key']
+            self.assertEqual(len(key), 1)
+            self.assertIn('scratchpad_shortcut', key[0]['explanation'])
+            _, findings, _ = self.validate({})
+            self.assertFalse([f for f in findings if f['check_id'] == 'config.llm_refine_key'])
+
     def test_missing_uses_fresh_defaults_without_writes(self):
         with tempfile.TemporaryDirectory() as tmp:
             _, findings, failed = diag.validate_config(Path(tmp) / 'missing' / 'config.json')

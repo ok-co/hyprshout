@@ -296,6 +296,40 @@ class TextInjectorInjectionTests(unittest.TestCase):
         copy.assert_not_called()
         restore_clipboard.assert_not_called()
 
+    def test_gnome_wayland_clipboard_only_never_types_line_breaks_as_enter(self):
+        injector = self._injector()
+
+        with (
+            mock.patch("text_injector.shutil.which", return_value=None),
+            mock.patch("text_injector.pyperclip.copy"),
+            mock.patch.object(injector, "_get_active_window_info", return_value=None),
+            mock.patch.object(injector, "_save_clipboard", return_value=b"old clipboard"),
+            mock.patch.object(injector, "_try_wl_copy", return_value=(True, None)),
+            mock.patch.object(injector, "_send_paste_keys_slow", return_value=True) as paste_chord,
+            mock.patch.object(injector, "_type_text_ydotool", return_value=True) as direct_type,
+            mock.patch.object(injector, "_layout_is_type_safe", return_value=True),
+            mock.patch.object(injector, "_restore_clipboard"),
+            mock.patch.object(injector, "_send_enter_if_auto_submit") as auto_submit,
+            mock.patch("text_injector.time.sleep"),
+            mock.patch.dict(
+                "text_injector.os.environ",
+                {
+                    "XDG_SESSION_TYPE": "wayland",
+                    "XDG_CURRENT_DESKTOP": "pop:GNOME",
+                    "XDG_SESSION_DESKTOP": "pop",
+                    "DESKTOP_SESSION": "pop",
+                    "WAYLAND_DISPLAY": "wayland-0",
+                },
+                clear=True,
+            ),
+        ):
+            self.assertTrue(injector._inject_via_clipboard_and_hotkey(
+                "first line\nsecond line", auto_submit=False, clipboard_only=True))
+
+        direct_type.assert_not_called()
+        paste_chord.assert_called_once()
+        auto_submit.assert_not_called()
+
     def test_application_rule_uses_custom_chord_for_emacs(self):
         injector = self._injector()
         injector.config_manager = ConfigStub({

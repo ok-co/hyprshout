@@ -8,7 +8,8 @@ meant rather than what you said:
 - Self-corrections: "Tuesday, no wait, Wednesday" becomes "Wednesday"
 - Filler words, false starts, stutters and repeated phrases are removed
 - Rambling or convoluted passages are rephrased concisely, keeping every fact, name and number
-- Your language and tone are kept; nothing is translated, answered or added
+- Your language and tone are kept; nothing is translated, answered or added, unless you
+  [trigger a translation](#translation)
 
 It works with any transcription backend. [OpenRouter](https://openrouter.ai) is built in (one key, hundreds of
 models); any OpenAI-compatible chat completions endpoint works too: OpenAI, Groq, or a local Ollama or llama.cpp server.
@@ -98,6 +99,52 @@ A local model through Ollama, no key needed:
 Any OpenRouter model id works in `llm_refine_model`. Fast, inexpensive models without extended reasoning keep the
 delay before paste short; the OSD stays in its processing state while the LLM works.
 
+## Translation
+
+The LLM can also translate a dictation, into any language it writes, from any source language and with
+any transcription backend. You pick per recording: the usual trigger pastes what you said, a translate
+trigger pastes the cleaned-up translation.
+
+```jsonc
+{
+    "translate_shortcut": "SUPER+ALT+T",   // records like primary_shortcut, then translates
+    "llm_translate_language": "English"    // a name or a code: "German", "pt-BR", "Japanese"
+}
+```
+
+With [compositor bindings](HOTKEYS.md#translate-key) (`external_bindings`), `translate_shortcut` is ignored; bind
+`--translate` (or, for push-to-talk, `translate` written to the control FIFO) instead. From any
+[hotkey system or script](HOTKEYS.md#external-hotkey-systems), add `--translate`:
+
+```bash
+hyprwhspr record toggle --translate
+hyprwhspr record start --translate --lang it   # Italian speech, translated
+```
+
+- Translation uses the provider, model and key set up with `hyprwhspr config llm`. It works whether or not
+  `llm_refine_enabled` is on: with refinement off, only translated dictations go to the LLM
+- The translation is added to whichever prompt is active, so your own prompt file and
+  `llm_refine_extra_instructions` still apply
+- The shortcut follows `recording_mode`: held in push-to-talk, tapped in toggle; in long-form mode, a session
+  it starts is translated on submit
+- A translated recording isn't [typed live](../backends/REALTIME_WEBSOCKET.md), since the translation needs the
+  whole dictation
+- If translation fails, the original text is pasted, as with refinement
+
+Try it before binding a key:
+
+```bash
+hyprwhspr config llm test --translate "allora, ci vediamo martedì, anzi no, mercoledì"
+```
+
+This differs from Whisper's [`task: translate`](../backends/LANGUAGE.md#translation), which only targets English,
+only works with the Whisper backends, and applies to every dictation.
+
+## Scratchpad
+
+For text you write in several passes, the [scratchpad](SCRATCHPAD.md) uses the same connection to build a draft
+from many dictations, edits included, and pastes it when you ask.
+
 ## Order and failures
 
 Refinement runs after [word overrides, filler filtering and symbol replacements](TEXT_PROCESSING.md), and before the
@@ -120,8 +167,9 @@ In continuous recording mode, each pasted segment is refined separately.
 
 ```bash
 hyprwhspr config llm               # setup wizard
-hyprwhspr config llm status        # provider, model, masked key, prompt source
+hyprwhspr config llm status        # provider, model, masked key, prompt source, translation target
 hyprwhspr config llm test "so um send it Tuesday, no, Wednesday"
+hyprwhspr config llm test --translate "ciao, come stai"
 echo "text" | hyprwhspr config llm test
 hyprwhspr config llm prompt        # write your own prompt in $EDITOR
 hyprwhspr config llm disable       # turn off; settings and key are kept
@@ -129,4 +177,4 @@ hyprwhspr config llm forget-key    # delete the stored API key
 ```
 
 `test` works while refinement is disabled, so you can try a model or prompt first. `hyprwhspr config validate` warns
-when refinement is enabled without a stored key.
+when refinement is enabled, or a `translate_shortcut` is set, without a stored key.

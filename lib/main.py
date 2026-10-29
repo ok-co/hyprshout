@@ -86,10 +86,12 @@ from app.silence import SilenceMixin
 from app.feedback import FeedbackMixin
 from app.control import ControlMixin
 from app.recovery import RecoveryMixin
+from app.scratchpad import ScratchpadMixin
 from app.voice import VoiceControlMixin
+from scratchpad import Scratchpad
 
 class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, ControlMixin, RecoveryMixin,
-                   VoiceControlMixin):
+                   ScratchpadMixin, VoiceControlMixin):
     """Main application class for hyprwhspr voice dictation (Headless Mode)"""
 
     def _diagnostics_snapshot(self):
@@ -119,11 +121,17 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
         self.text_injector = TextInjector(self.config)
         self.global_shortcuts = None
         self.secondary_shortcuts = None
+        self._translate_shortcuts = None
+        self._scratchpad_shortcuts = None
+        self._scratchpad_paste_shortcuts = None
         self._cancel_shortcuts = None
+        self._scratchpad = Scratchpad()  # Draft built by scratchpad dictations, pasted when ready
+        self._scratchpad_notification_id = None
 
         # Application state
         self.is_recording = False
         self._current_language_override = None  # Language override for current recording session
+        self._current_route = 'paste'  # Where this session's dictation goes: 'paste' | 'translate' | 'scratchpad'
         self.is_processing = False
         self._file_transcription_active = False
         # Long-form keeps its own state machine, so it claims this flag under
@@ -202,6 +210,7 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
             is_recording=lambda: self.is_recording,
             on_file_transcribe=self._handle_file_transcribe,
             on_recover=self._handle_recovery,
+            on_scratchpad=self._handle_scratchpad_request,
             on_diagnostics=self._diagnostics_snapshot,
         )
 
@@ -257,9 +266,9 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
         self._longform_submit_shortcuts = None  # Submit shortcut handler
 
         # Voice control (app/voice.py): the wake word listener, the quiet
-        # command session ('idle' | 'command' | 'deciding' | 'acting'), and the delivery
-        # plan of the current voice-started dictation. The generation retires
-        # a command a manual start or cancel overtook.
+        # command session ('idle' | 'command' | 'deciding' | 'acting'), and
+        # the plan of the current voice-started dictation. The generation
+        # retires a command a manual start or cancel overtook.
         self._voice_listener = None
         self._voice_lock = threading.Lock()
         self._voice_state = 'idle'
@@ -485,6 +494,14 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
             # Stop secondary shortcuts
             cleanup_step("stop secondary shortcuts", lambda: call_optional('secondary_shortcuts', 'stop'))
 
+            # Stop translate shortcut
+            cleanup_step("stop translate shortcut", lambda: call_optional('_translate_shortcuts', 'stop'))
+
+            # Stop scratchpad shortcuts
+            cleanup_step("stop scratchpad shortcut", lambda: call_optional('_scratchpad_shortcuts', 'stop'))
+            cleanup_step("stop scratchpad paste shortcut",
+                         lambda: call_optional('_scratchpad_paste_shortcuts', 'stop'))
+
             # Stop cancel shortcut
             cleanup_step("stop cancel shortcut", lambda: call_optional('_cancel_shortcuts', 'stop'))
 
@@ -706,7 +723,7 @@ if __name__ == "__main__":
     # Keep in sync with the subcommand route in bin/hyprwhspr
     CLI_SUBCOMMANDS = ['update', 'setup', 'install', 'config', 'waybar', 'noctalia', 'systemd', 'status',
                        'model', 'validate', 'uninstall', 'backend', 'state', 'mic-osd',
-                       'keyboard', 'record', 'test', 'transcribe']
+                       'keyboard', 'record', 'scratchpad', 'test', 'transcribe']
     if len(sys.argv) > 1 and sys.argv[1] in CLI_SUBCOMMANDS:
         log(f"[REDIRECT] Detected CLI subcommand '{sys.argv[1]}', redirecting to CLI...")
         # Execute CLI with same arguments

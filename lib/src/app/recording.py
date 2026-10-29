@@ -87,12 +87,15 @@ class RecordingMixin:
             if not self._start_settled.wait(timeout=5.0):
                 log("[WARN] Recording start still settling; stopping capture anyway")
 
-    def _start_recording(self, language_override=None, voice_plan=None):
+    def _start_recording(self, language_override=None, route='paste', voice_plan=None):
         """Start voice recording
         
         Args:
             language_override: Optional language code to use for this recording session
                               (overrides the default language from config)
+            route: Where this session's dictation goes: 'paste', 'translate'
+                   (the LLM translates it into llm_translate_language before
+                   it is pasted) or 'scratchpad' (an edit to the draft)
             voice_plan: DictationPlan of a voice-started dictation; None for a
                         manual start, which also cancels a pending voice command
         """
@@ -133,6 +136,7 @@ class RecordingMixin:
                 self._stall_notified = False  # an earlier stall's notice covers only its own restart
                 # Store language override for this recording session
                 self._current_language_override = language_override
+                self._current_route = route
                 # Delivery plan of a voice-started dictation, taken at stop
                 self._voice_plan = voice_plan
                 # Push-to-talk hold is measured from this accepted press
@@ -428,12 +432,14 @@ class RecordingMixin:
 
     def _live_typing_eligible(self) -> bool:
         """Opted in, allowed by config (see live_typing_conflict), and no capture client waiting."""
+        if self._current_route != 'paste':
+            return False  # translation and scratchpad edits need the whole dictation
         if not self.config.get_setting('realtime_live_typing', False):
             return False
         if self._recording_control_server.has_capture_subscriber():
             return False
         if getattr(self, '_voice_plan', None) is not None:
-            return False  # voice dictations are rewritten or filed whole, after the end word
+            return False  # a voice dictation ends on the end word, which would be typed live
         return self.whisper_manager.realtime_live_typing_supported()
 
     def _open_live_typing(self):
@@ -522,6 +528,7 @@ class RecordingMixin:
             session = self._recording_session
             self.is_recording = False
             self._current_language_override = None  # Clear language override on error
+            self._current_route = 'paste'
             self._ptt_reset()
 
         log("[MUTE] Recording cancelled - microphone returned silence for 1 second")
@@ -560,6 +567,7 @@ class RecordingMixin:
             session = self._recording_session
             self.is_recording = False
             self._current_language_override = None
+            self._current_route = 'paste'
             self._ptt_reset()
 
         log("[RECOVERY] Recording discarded - audio server restarted")
@@ -582,6 +590,7 @@ class RecordingMixin:
                 session = self._recording_session
                 self.is_recording = False
                 self._current_language_override = None
+                self._current_route = 'paste'
                 self._ptt_reset()
         if not recording:
             # Nothing recording: cancel drops a pending voice command instead
@@ -705,6 +714,7 @@ class RecordingMixin:
                 
             # Clear language override after transcription completes
             self._current_language_override = None
+            self._current_route = 'paste'
                 
         except Exception as e:
             log(f"[ERROR] Error stopping recording: {e}")
@@ -713,6 +723,7 @@ class RecordingMixin:
             try:
                 self.is_recording = False
                 self._current_language_override = None  # Clear language override on cancel
+                self._current_route = 'paste'
                 self._show_result_and_hide(False)
                 self._stop_audio_level_monitoring()
                 self._write_recording_status(False)
@@ -781,9 +792,9 @@ class RecordingMixin:
 
                 # Inject text
                 if voice_plan is None:
-                    outcome = self._inject_text(text)
+                    outcome = self._inject_text(text, route=self._current_route)
                 else:
-                    outcome = self._inject_text(text, voice_plan=voice_plan)
+                    outcome = self._inject_text(text, route=self._current_route, voice_plan=voice_plan)
                 success = outcome != InjectionOutcome.FAILED
             else:
                 log("[WARN] No transcription generated")
@@ -814,11 +825,12 @@ class RecordingMixin:
         if self._recording_control_server.has_capture_subscriber():
             self._notify_capture("", final=True)
 
-    def _inject_text(self, text, voice_plan=None):
+    def _inject_text(self, text, route='paste', voice_plan=None):
         """Inject transcribed text into active application
 
-        voice_plan routes a voice-started dictation: to the scratchpad, or
-        pasted with its own refine step (raw, translated).
+        route 'translate' has the LLM translate it first; 'scratchpad' applies
+        it to the draft instead of pasting. voice_plan carries a voice-started
+        dictation's own options (raw, translation language).
         """
 
         # Capture mode: route text to client instead of injecting into active app
@@ -826,15 +838,15 @@ class RecordingMixin:
             self._notify_capture(text, final=True)
             return InjectionOutcome.INJECTED
 
-        if voice_plan is not None and voice_plan.output == 'scratchpad':
-            return self._save_to_scratchpad(text, voice_plan)
+        if route == 'scratchpad':
+            outcome = self._scratchpad_apply(text)
+            if outcome != InjectionOutcome.FAILED:
+                self._mark_delivery_healthy()
+            return outcome
 
         try:
-            refine = self._voice_refine(voice_plan)
-            if refine is None:
-                outcome = self.text_injector.inject_text(text)
-            else:
-                outcome = self.text_injector.inject_text(text, refine=refine)
+            outcome = self.text_injector.inject_text(
+                text, translate=route == 'translate', **self._voice_delivery_options(voice_plan))
             if outcome == InjectionOutcome.FAILED:
                 log(f"[ERROR] Text injection failed ({len(text)} chars)")
                 notify = True
