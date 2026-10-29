@@ -11,6 +11,7 @@ export const sidebar = [
       'docs/usage/text-processing',
       'docs/usage/llm-refinement',
       'docs/usage/scratchpad',
+      'docs/usage/voice-control',
       'docs/usage/audio-input',
       'docs/usage/feedback',
       'docs/usage/cli',

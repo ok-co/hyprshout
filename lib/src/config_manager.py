@@ -122,6 +122,22 @@ def build_default_config():
         'scratchpad_model': None,              # Scratchpad edits; null = llm_refine_model
         'scratchpad_timeout': 30,              # Seconds per scratchpad edit; the draft is kept on timeout
         'scratchpad_clear_on_paste': True,     # Empty the draft once it is pasted (scratchpad undo restores it)
+        # Voice control (app/voice.py): the start word opens a quiet command
+        # session, the end word closes it; a decision model on OpenRouter's
+        # Decisions API picks the action. Words are openWakeWord model names
+        # or paths to custom .onnx models. The end word also stops dictations.
+        'voice_control_enabled': False,
+        'voice_control_start_word': 'hey_jarvis',
+        'voice_control_end_word': 'hey_mycroft',
+        'voice_control_threshold': 0.5,          # Wake word score (0-1) that counts as heard
+        'voice_control_end_trim_seconds': 1.0,   # Audio cut from the end so the end word isn't transcribed
+        'voice_control_max_command_seconds': 15, # A command longer than this is dropped
+        'voice_control_cues': True,              # Quiet pings when a command opens and closes
+        'voice_control_decision_model': 'typesafe/jev-1.14',
+        'voice_control_decision_endpoint': 'https://openrouter.ai/api/alpha/decisions',
+        'voice_control_decision_timeout': 10,
+        'voice_control_min_confidence': 0.5,     # Below this the decision counts as "didn't understand"
+        'voice_control_languages': ['en', 'de', 'fr', 'es', 'it', 'pt', 'nl', 'pl'],  # Languages commands can name
         'clipboard_behavior': False,  # Boolean: true = clear clipboard after delay, false = keep (current behavior)
         'clipboard_clear_delay': 5.0,  # Float: seconds to wait before clearing clipboard (only used if clipboard_behavior is true)
         'clipboard_settle_delay': 0.15,  # Seconds between clipboard copy and paste shortcut

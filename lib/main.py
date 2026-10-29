@@ -87,10 +87,11 @@ from app.feedback import FeedbackMixin
 from app.control import ControlMixin
 from app.recovery import RecoveryMixin
 from app.scratchpad import ScratchpadMixin
+from app.voice import VoiceControlMixin
 from scratchpad import Scratchpad
 
 class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, ControlMixin, RecoveryMixin,
-                   ScratchpadMixin):
+                   ScratchpadMixin, VoiceControlMixin):
     """Main application class for hyprwhspr voice dictation (Headless Mode)"""
 
     def _diagnostics_snapshot(self):
@@ -264,6 +265,18 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
         )
         self._longform_submit_shortcuts = None  # Submit shortcut handler
 
+        # Voice control (app/voice.py): the wake word listener, the quiet
+        # command session ('idle' | 'command' | 'deciding' | 'acting'), and
+        # the plan of the current voice-started dictation. The generation
+        # retires a command a manual start or cancel overtook.
+        self._voice_listener = None
+        self._voice_lock = threading.Lock()
+        self._voice_state = 'idle'
+        self._voice_generation = 0
+        self._voice_plan = None
+        self._voice_start_phrase = None
+        self._voice_end_phrase = None
+
         # Track startup time BEFORE any monitors are initialized
         # This prevents race condition where hotplug events arrive before _startup_time is set
         self._startup_time = time.monotonic()
@@ -380,6 +393,7 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
             return False
 
         self._recording_control_server.start()
+        self._start_voice_control()
 
         self._report_missing_dependencies()
         self._report_cpu_only_build()
@@ -450,6 +464,9 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
 
         try:
             cleanup_step("stop recording control server", self._recording_control_server.stop)
+
+            # Stop the wake word listener before capture and backends go away
+            cleanup_step("stop voice control", self._stop_voice_control)
 
             # Stop background recovery thread
             cleanup_step("stop background recovery", lambda: stop_thread(

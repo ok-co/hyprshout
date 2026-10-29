@@ -242,6 +242,16 @@ class AudioManager:
             print(f"Failed to play error sound: {self.error_sound}")
         return result
 
+    def play_cue_sound(self, kind: str = 'start') -> bool:
+        """Play a quiet start or stop ping, the voice command session's only feedback"""
+        if kind == 'stop':
+            sound, available, volume = self.stop_sound, self.stop_sound_available, self.stop_volume
+        else:
+            sound, available, volume = self.start_sound, self.start_sound_available, self.start_volume
+        if not self.enabled or not available:
+            return False
+        return self._play_sound(sound, self._validate_volume(volume * 0.4))
+
     def set_audio_feedback(self, enabled: bool):
         """Enable or disable audio feedback"""
         self.enabled = bool(enabled)
