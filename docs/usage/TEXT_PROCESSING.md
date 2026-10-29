@@ -2,6 +2,8 @@
 
 What happens to words between the model and the paste.
 
+To have an LLM clean up each dictation (self-corrections, repetition, rambling), see [LLM refinement](LLM_REFINEMENT.md).
+
 ## Word overrides
 
 Customize transcriptions:
@@ -141,7 +143,7 @@ Chinese, Japanese and Korean write without spaces between words:
 
 ## Post-transcription hook
 
-Pipe each transcription through a shell command before it's pasted. Stdin receives the (preprocessed) transcription; non-empty stdout replaces it. Empty stdout leaves the text unchanged, so the same mechanism works for both transforms and fire-and-forget observers. A hook that exits with status `77` consumes the transcription successfully and prevents it from being pasted.
+Pipe each transcription through a shell command before it's pasted. With [LLM refinement](LLM_REFINEMENT.md) enabled, the hook receives the refined text. Stdin receives the (preprocessed) transcription; non-empty stdout replaces it. Empty stdout leaves the text unchanged, so the same mechanism works for both transforms and fire-and-forget observers. A hook that exits with status `77` consumes the transcription successfully and prevents it from being pasted.
 
 ```jsonc
 {

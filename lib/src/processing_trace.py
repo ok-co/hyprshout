@@ -104,6 +104,7 @@ def build_processing_trace(raw, config):
         'recording_mode': _setting(config, 'recording_mode', 'toggle'),
         'symbol_replacements': bool(_setting(config, 'symbol_replacements', True)),
         'hook_present': bool(str(_setting(config, 'post_transcription_hook', '') or '').strip()),
+        'llm_refine_enabled': _setting(config, 'llm_refine_enabled', False) is True,
         'silence_timeout': _finite_float_setting(config, 'silence_timeout', 0),
         'continuous_silence_seconds': _finite_float_setting(config, 'continuous_silence_seconds', 2.0),
         'continuous_silence_threshold': _finite_float_setting(config, 'continuous_silence_threshold', 0),

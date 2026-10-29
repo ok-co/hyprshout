@@ -126,6 +126,8 @@ def live_typing_conflict(get_setting) -> Optional[str]:
     hook = get_setting('post_transcription_hook', None)
     if isinstance(hook, str) and hook.strip():
         return 'post_transcription_hook needs the whole dictation'
+    if get_setting('llm_refine_enabled', False) is True:
+        return 'llm_refine_enabled needs the whole dictation'
     return None
 
 

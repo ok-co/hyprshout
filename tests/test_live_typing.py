@@ -766,6 +766,7 @@ class LiveTypingConflictTests(unittest.TestCase):
         self.assertEqual(self.conflict(recording_mode="continuous"), "continuous needs the whole dictation")
         self.assertEqual(self.conflict(recording_mode="long_form"), "long_form needs the whole dictation")
         self.assertIn("post_transcription_hook", self.conflict(post_transcription_hook="cat"))
+        self.assertIn("llm_refine_enabled", self.conflict(llm_refine_enabled=True))
         self.assertEqual(self.conflict(realtime_mode="converse"), "converse mode")
         self.assertEqual(self.conflict(websocket_live_text="revisable"), "this model may revise words")
         self.assertIn("realtime-ws", self.conflict(transcription_backend="onnx-asr"))

@@ -9,6 +9,7 @@ export const sidebar = [
       'docs/usage/hotkeys',
       'docs/usage/paste',
       'docs/usage/text-processing',
+      'docs/usage/llm-refinement',
       'docs/usage/audio-input',
       'docs/usage/feedback',
       'docs/usage/cli',

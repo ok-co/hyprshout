@@ -15,7 +15,9 @@ from config_manager import (build_default_config, normalize_legacy_config, expan
 from paths import CONFIG_FILE, DATA_DIR, SOCKET_FILE
 from backend_utils import normalize_backend
 from dependency_plan import PLAN_SPECS, plan_key
+from credential_manager import get_credential
 from installation import is_nix_install, is_supported_backend, repair_hint
+from llm_refiner import LLMRefineError, resolve_target as resolve_llm_target
 from provider_registry import get_models_for_backend, get_realtime_capabilities, get_realtime_mode
 from realtime_protocols import PROTOCOLS, live_typing_conflict
 from session_environment import classify_display_environment
@@ -139,6 +141,17 @@ def validate_config(path=None):
                     and protocol is not None and protocol.per_recording_session):
                 findings.append(finding('config.realtime_continuous', 'error',
                                         f'{protocol.id} streams one recording at a time; use toggle, push_to_talk or auto.'))
+    if config['llm_refine_enabled'] is True:
+        try:
+            target = resolve_llm_target(lambda key, default=None: config.get(key, default))
+        except LLMRefineError:
+            findings.append(finding('config.llm_refine', 'error', 'LLM refinement needs an endpoint URL and model.',
+                'Run hyprwhspr config llm, or set llm_refine_endpoint_url and llm_refine_model.'))
+        else:
+            if target['provider']['api_key_required'] and not get_credential(target['credential']):
+                findings.append(finding('config.llm_refine_key', 'warning',
+                    'LLM refinement is enabled but no API key is stored; dictations paste unrefined.',
+                    'Run hyprwhspr config llm to store the key.'))
     if config.get('realtime_live_typing'):
         conflict = live_typing_conflict(lambda key, default=None: config.get(key, default))
         if conflict:

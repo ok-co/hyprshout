@@ -42,13 +42,26 @@ hyprwhspr record capture --trace-processing
 ## Trace processing
 
 `--trace-processing` prints one UTF-8 JSON document using the running daemon's settings. It reports exact `raw` and
-`preprocessed` text, backend/model, recording and silence settings, symbol/hook state, `vad_mode`, and `boundary_mode`.
+`preprocessed` text, backend/model, recording and silence settings, symbol/hook/LLM refinement state, `vad_mode`, and `boundary_mode`.
 It does not run hooks, append space, save the transcript, or inject text.
 
 `vad_mode`: `none`; `silero_filter` (pre-inference filtering); `silero_segmented` (ONNX segmentation after the reported
 duration gate); `server_vad`; `manual_commit`; or `provider_managed`. `boundary_mode` is `manual_stop`,
 `silence_auto_stop`, or `continuous_silence`. Continuous silence flushing and realtime server VAD can turn pauses into
 independently punctuated segments. Trace does not change VAD or silence defaults.
+
+## LLM refinement
+
+```bash
+hyprwhspr config llm               # setup: provider, API key, model
+hyprwhspr config llm status
+hyprwhspr config llm test "text"   # or pipe text in
+hyprwhspr config llm prompt        # write your own prompt
+hyprwhspr config llm disable
+hyprwhspr config llm forget-key
+```
+
+See [LLM refinement](LLM_REFINEMENT.md).
 
 ## File transcription
 

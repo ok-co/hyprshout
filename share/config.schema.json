@@ -216,6 +216,56 @@
       "default": null,
       "description": "Shell command run after preprocessing, before paste. Stdin receives the transcription; non-empty stdout replaces it. Empty stdout preserves the original text. Exit status 77 intentionally consumes the transcription and skips paste. Env vars HYPRWHSPR_MODEL and HYPRWHSPR_BACKEND are set. Subject to a 5s timeout; other errors pass through the original text."
     },
+    "llm_refine_enabled": {
+      "type": "boolean",
+      "default": false,
+      "description": "Rewrite each dictation with an LLM before post_transcription_hook and paste. Cleans up punctuation, mis-hearings, self-corrections, repetition and rambling. Any failure pastes the original text. Configure with 'hyprwhspr config llm'."
+    },
+    "llm_refine_provider": {
+      "type": "string",
+      "enum": ["openrouter", "custom"],
+      "default": "openrouter",
+      "description": "'openrouter' uses OpenRouter with the API key stored by 'hyprwhspr config llm'. 'custom' uses llm_refine_endpoint_url, any OpenAI-compatible chat completions endpoint (OpenAI, Groq, Ollama, llama.cpp); its optional key is stored as 'llm-custom'."
+    },
+    "llm_refine_endpoint_url": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Chat completions URL for the custom provider, e.g. https://api.openai.com/v1/chat/completions or http://localhost:11434/v1/chat/completions. An API key is never sent over plain http to a non-local host."
+    },
+    "llm_refine_model": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Model id. Null uses the provider default (OpenRouter: anthropic/claude-haiku-5.5). Required for the custom provider."
+    },
+    "llm_refine_prompt": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "System prompt replacing the built-in cleanup prompt. The dictation is sent as the user message inside <transcript> tags."
+    },
+    "llm_refine_prompt_file": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Path to a file holding the system prompt; takes precedence over llm_refine_prompt and is re-read for every dictation. 'hyprwhspr config llm prompt' creates one from the built-in prompt."
+    },
+    "llm_refine_extra_instructions": {
+      "type": "string",
+      "default": "",
+      "description": "Text appended to the active prompt, e.g. names to spell correctly or a preferred spelling variant, without replacing the built-in prompt."
+    },
+    "llm_refine_temperature": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 2,
+      "default": null,
+      "description": "Sampling temperature sent to the model. Null leaves it to the provider."
+    },
+    "llm_refine_timeout": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 300,
+      "default": 15,
+      "description": "Seconds to wait for the LLM. On timeout or any error the original text is pasted."
+    },
     "clipboard_behavior": {
       "type": "boolean",
       "default": false,

@@ -42,6 +42,11 @@ try:
 except ImportError:
     import keyboard_layout
 
+try:
+    from . import llm_refiner
+except ImportError:
+    import llm_refiner
+
 
 class _LazyPyperclip:
     """Load the optional fallback only when native clipboard tools are absent."""
@@ -1717,6 +1722,7 @@ except Exception:
         if not processed_text.strip():
             log("No text to inject (empty after preprocessing)")
             return InjectionOutcome.INJECTED
+        processed_text = self._refine_with_llm(processed_text)
         hook_result = self._run_post_transcription_hook(processed_text)
         if hook_result.outcome == _PostTranscriptionHookOutcome.CONSUME:
             return InjectionOutcome.CONSUMED
@@ -1761,6 +1767,30 @@ except Exception:
         Preprocess text to handle common speech-to-text corrections and remove unwanted line breaks
         """
         return preprocess_text(text, self.config_manager)
+
+    def _refine_with_llm(self, text: str) -> str:
+        """Rewrite the dictation with the configured LLM (llm_refine_*).
+
+        Any failure keeps the original text; the log carries the reason, never
+        the dictation itself.
+        """
+        if not (self.config_manager and text):
+            return text
+        get_setting = self.config_manager.get_setting
+        if not llm_refiner.is_enabled(get_setting):
+            return text
+        started = time.monotonic()
+        try:
+            refined = llm_refiner.refine_text(text, get_setting)
+        except llm_refiner.LLMRefineError as e:
+            log(f"[LLM] Refinement failed, pasting original text: {e}")
+            return text
+        except Exception as e:
+            log(f"[LLM] Refinement failed, pasting original text: {type(e).__name__}")
+            return text
+        log(f"[LLM] Refined dictation in {time.monotonic() - started:.1f}s "
+            f"({len(text)} -> {len(refined)} chars)")
+        return refined
 
     def _run_post_transcription_hook(self, text: str) -> _PostTranscriptionHookResult:
         """Run the user's post_transcription_hook shell command.

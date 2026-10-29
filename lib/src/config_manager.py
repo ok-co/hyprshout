@@ -103,6 +103,18 @@ def build_default_config():
         # Empty stdout leaves text unchanged (observer-only hooks).
         # Null disables the hook.
         'post_transcription_hook': None,
+        # Rewrite each dictation with an LLM before the hook and paste
+        # (llm_refiner.py). The API key lives in the credential store, never
+        # here. Null model/prompt = the provider's default model / built-in prompt.
+        'llm_refine_enabled': False,
+        'llm_refine_provider': 'openrouter',   # 'openrouter' | 'custom' (any OpenAI-compatible endpoint)
+        'llm_refine_endpoint_url': None,       # Chat completions URL; required for 'custom'
+        'llm_refine_model': None,
+        'llm_refine_prompt': None,             # Replaces the built-in system prompt
+        'llm_refine_prompt_file': None,        # Prompt read from a file each dictation; wins over llm_refine_prompt
+        'llm_refine_extra_instructions': '',   # Appended to whichever prompt is active
+        'llm_refine_temperature': None,        # Null = provider default
+        'llm_refine_timeout': 15,              # Seconds; the original text is pasted on timeout
         'clipboard_behavior': False,  # Boolean: true = clear clipboard after delay, false = keep (current behavior)
         'clipboard_clear_delay': 5.0,  # Float: seconds to wait before clearing clipboard (only used if clipboard_behavior is true)
         'clipboard_settle_delay': 0.15,  # Seconds between clipboard copy and paste shortcut
