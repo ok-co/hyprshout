@@ -24,7 +24,7 @@ from backend_utils import normalize_backend
 from hallucination import is_hallucination
 import voice_command
 from voice_command import SCRATCHPAD_ACTIONS, DecisionError, phrase_for, plan_for, strip_wake_phrase
-from wake_word import SAMPLE_RATE, WakeWordError, WakeWordListener, normalize_word
+from wake_word import ENGINES, SAMPLE_RATE, WakeWordError, WakeWordListener, normalize_word
 
 DEFAULT_START_WORD = 'hey_jarvis'
 DEFAULT_END_WORD = 'hey_mycroft'
@@ -48,6 +48,11 @@ class VoiceControlMixin:
             log(f"[VOICE] Voice control disabled: {reason}")
             self._notify_user("hyprwhspr", f"Voice control disabled: {reason}", urgency="normal")
             return self._start_pause_word() if long_form else False
+        engine_options = self._wake_engine_options()
+        if engine_options is None:
+            engine = self.config.get_setting('voice_control_engine', 'openwakeword')
+            self._notify_user("hyprwhspr", f"Voice control: unknown engine {engine!r}", urgency="normal")
+            return False
         try:
             start_word = normalize_word(self.config.get_setting('voice_control_start_word', DEFAULT_START_WORD))
             end_word = normalize_word(self.config.get_setting('voice_control_end_word', DEFAULT_END_WORD))
@@ -65,8 +70,23 @@ class VoiceControlMixin:
             threshold=self._get_float_setting('voice_control_threshold', 0.5),
             device=self.audio_capture.device_id,
             max_capture_seconds=self._get_float_setting('voice_control_max_command_seconds', 15.0),
+            **engine_options,
         )
         return self._voice_listener.start()
+
+    def _wake_engine_options(self):
+        """WakeWordListener engine settings; None (logged) for an unknown voice_control_engine."""
+        engine = str(self.config.get_setting('voice_control_engine', 'openwakeword') or '').strip().lower()
+        if engine not in ENGINES:
+            log(f"[VOICE] Voice control disabled: unknown voice_control_engine {engine!r}")
+            return None
+        return {
+            'engine': engine,
+            'keyword_threshold': self._get_float_setting('voice_control_keyword_threshold', 0.25),
+            'keyword_boost': self._get_float_setting('voice_control_keyword_boost', 1.0),
+            'vosk_model': self.config.get_setting('voice_control_vosk_model', 'en-us'),
+            'vosk_confidence': self._get_float_setting('voice_control_vosk_confidence', 0.9),
+        }
 
     def _voice_control_unsupported(self):
         if self.config.get_setting('recording_mode', 'toggle') == 'long_form':
@@ -92,10 +112,14 @@ class VoiceControlMixin:
         except WakeWordError as e:
             log(f"[VOICE] Pause word disabled: {e}")
             return False
+        engine_options = self._wake_engine_options()
+        if engine_options is None:
+            return False
         self._voice_listener = WakeWordListener(
             word, None, self._on_pause_word,
             threshold=self._get_float_setting('voice_control_threshold', 0.5),
             device=self.audio_capture.device_id,
+            **engine_options,
         )
         return self._voice_listener.start()
 
@@ -117,7 +141,7 @@ class VoiceControlMixin:
     def _on_wake_event(self, kind, detected_at):
         """Listener callback (its worker thread): decide quickly, hand slow work to a thread."""
         if kind == 'start':
-            self._voice_begin_command()
+            self._voice_begin_command(detected_at)
         elif kind == 'end':
             if self._voice_finish_command(detected_at):
                 return
@@ -128,7 +152,7 @@ class VoiceControlMixin:
             if self._voice_cancel_command("too long - say the end word to finish a command"):
                 self.audio_manager.play_error_sound()
 
-    def _voice_begin_command(self):
+    def _voice_begin_command(self, detected_at=None):
         with self._recording_lock:
             busy = (self.is_recording or self.is_processing or self._recording_starting
                     or self._longform_active)
@@ -139,7 +163,9 @@ class VoiceControlMixin:
                 return
             self._voice_state = 'command'
             self._voice_generation += 1
-            self._voice_listener.begin_capture()
+            # From the end of the start word: an engine that reports it late
+            # (Vosk, at the next pause) must not lose the command's first words
+            self._voice_listener.begin_capture(since=detected_at)
         # The command must not be transcribed over the draft or a reply being read aloud
         self._stop_scratchpad_speech()
         self._stop_assistant_speech()

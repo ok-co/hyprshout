@@ -507,6 +507,31 @@ class VoiceControlTests(unittest.TestCase):
                     listener.assert_not_called()
                     self.assertIn(reason, app._notify_user.call_args.args[1])
 
+    def test_engine_settings_reach_the_listener(self):
+        app = self.app(voice_control_enabled=True, voice_control_engine=' Sherpa ',
+                       voice_control_start_word='hey computer', voice_control_end_word='over and out',
+                       voice_control_keyword_threshold=0.4, voice_control_keyword_boost=2.0)
+        app._voice_listener = None
+        app.audio_capture = mock.Mock(device_id=None)
+        listener = mock.Mock()
+        with patch_app_global(self.App, 'WakeWordListener', listener):
+            self.assertTrue(app._start_voice_control())
+        args, kwargs = listener.call_args
+        self.assertEqual(args[:2], ('hey_computer', 'over_and_out'))
+        self.assertEqual((kwargs['engine'], kwargs['keyword_threshold'], kwargs['keyword_boost']),
+                         ('sherpa', 0.4, 2.0))
+        self.assertEqual((kwargs['vosk_model'], kwargs['vosk_confidence']), ('en-us', 0.9))
+        self.assertEqual((app._voice_start_phrase, app._voice_end_phrase), ('hey computer', 'over and out'))
+
+    def test_unknown_engine_disables_voice_control(self):
+        app = self.app(voice_control_enabled=True, voice_control_engine='porcupine')
+        app._voice_listener = None
+        app.audio_capture = mock.Mock(device_id=None)
+        with patch_app_global(self.App, 'WakeWordListener', mock.Mock()) as listener:
+            self.assertFalse(app._start_voice_control())
+        listener.assert_not_called()
+        self.assertIn('porcupine', app._notify_user.call_args.args[1])
+
     def test_long_form_mode_listens_for_the_pause_word_only(self):
         for enabled in (False, True):
             app = self.app(recording_mode='long_form', long_form_pause_word='Hey Rhasspy',
@@ -540,6 +565,24 @@ class VoiceControlTests(unittest.TestCase):
             app._on_pause_word('start', 5.0)
             app._on_pause_word('end', 6.0)
         app._longform.pause_word.assert_called_once_with(5.0, 0.8)
+
+    def test_pause_word_uses_the_configured_engine(self):
+        app = self.app(recording_mode='long_form', long_form_pause_word='przerwa',
+                       voice_control_engine='vosk', voice_control_vosk_model='pl')
+        app._voice_listener = None
+        app.audio_capture = mock.Mock(device_id=None)
+        app.audio_capture.input_is_shared.return_value = True
+        with patch_app_global(self.App, 'WakeWordListener', mock.Mock()) as listener:
+            self.assertTrue(app._start_voice_control())
+        kwargs = listener.call_args.kwargs
+        self.assertEqual((kwargs['engine'], kwargs['vosk_model']), ('vosk', 'pl'))
+        app = self.app(recording_mode='long_form', long_form_pause_word='przerwa', voice_control_engine='nope')
+        app._voice_listener = None
+        app.audio_capture = mock.Mock(device_id=None)
+        app.audio_capture.input_is_shared.return_value = True
+        with patch_app_global(self.App, 'WakeWordListener', mock.Mock()) as listener:
+            self.assertFalse(app._start_voice_control())
+        listener.assert_not_called()
 
     def test_disabled_voice_control_starts_nothing(self):
         app = self.app()

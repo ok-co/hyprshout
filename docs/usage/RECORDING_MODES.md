@@ -120,8 +120,12 @@ Say a word to pause, so you can talk without it being recorded. Say it again to 
 
 - Same as the pause shortcut: the stop sound and paused indicator, then the start sound on resume.
 - Speech while paused isn't recorded or auto-resumed; the word itself is cut from the recording.
-- Pretrained words are `hey_jarvis`, `hey_mycroft`, `alexa` and `hey_rhasspy`, or give the path to a custom
-  `.onnx` model. Set it up like [voice control](VOICE_CONTROL.md#setup): openWakeWord installed, and PipeWire or
-  PulseAudio. No API key is needed.
-- `voice_control_threshold` and `voice_control_end_trim_seconds` tune it the same way they tune
-  [wake words](VOICE_CONTROL.md#wake-words).
+- It uses the [wake word engine](VOICE_CONTROL.md#wake-words) in `voice_control_engine`. With openWakeWord (the
+  default), pretrained words are `hey_jarvis`, `hey_mycroft`, `alexa` and `hey_rhasspy`, or give the path to a
+  custom `.onnx` model. With `sherpa` any English phrase works, and with `vosk` a phrase in the model's language
+  ("przerwa" with `"voice_control_vosk_model": "pl"`).
+- Set it up like [voice control](VOICE_CONTROL.md#setup): the engine installed, and PipeWire or PulseAudio. No API
+  key is needed.
+- The engine's settings (`voice_control_threshold`, `voice_control_keyword_threshold`,
+  `voice_control_vosk_confidence`, ...) and `voice_control_end_trim_seconds` tune it the same way they tune wake
+  words.
