@@ -431,7 +431,7 @@ class SherpaDetectorTests(unittest.TestCase):
         sherpa.assert_called_once_with("a", "b", threshold=0.3, boost=1.5)
         with mock.patch.object(wake_word, "VoskKeywordDetector") as vosk:
             wake_word.make_detector("vosk", "a", "b", vosk_model="pl", vosk_confidence=0.8)
-        vosk.assert_called_once_with("a", "b", model="pl", min_confidence=0.8)
+        vosk.assert_called_once_with("a", "b", model="pl", min_confidence=0.8, phrases=())
         with self.assertRaisesRegex(WakeWordError, "unknown wake word engine"):
             wake_word.make_detector("porcupine", "a", "b")
 
@@ -659,6 +659,193 @@ class ListenerBackfillTests(unittest.TestCase):
         self.assertLessEqual(len(listener.end_capture()), wake_word.BACKFILL_SECONDS * SAMPLE_RATE)
         listener.begin_capture()
         self.assertEqual(len(listener.end_capture()), 0)
+
+
+class VoskCommandPhraseTests(unittest.TestCase):
+    """Command phrases in the Vosk grammar (voice_phrases)."""
+
+    setUp = VoskDetectorTests.setUp
+    words = staticmethod(VoskDetectorTests.words)
+
+    def detector(self, phrases=("cancel", "send the draft", "done"), **kwargs):
+        return wake_word.VoskKeywordDetector("hey jarvis", "over and out", model=str(self.model),
+                                             phrases=phrases, **kwargs)
+
+    def feed(self, detector, results, frames=None):
+        FakeRecognizer.instances[-1].results = results
+        pcm = np.zeros(FRAME_SAMPLES, dtype=np.int16)
+        hits = []
+        for _ in range(frames or max(results)):
+            detector.score(pcm)
+            hits += detector.phrase_hits
+        return hits
+
+    def test_phrases_join_the_grammar(self):
+        self.detector()
+        self.assertEqual(FakeRecognizer.instances[-1].grammar,
+                         ["hey jarvis", "over and out", "cancel", "done", "send the draft", "[unk]"])
+
+    def test_a_phrase_counts_alone_or_right_after_the_start_word(self):
+        detector = self.detector()
+        hits = self.feed(detector, {
+            5: self.words(("cancel", 1.0, 0.3)),
+            10: self.words(("hey", 1.0, 0.5), ("jarvis", 1.0, 0.7), ("send", 1.0, 0.75),
+                           ("the", 0.95, 0.78), ("draft", 1.0, 0.8)),
+        })
+        self.assertEqual([phrase for phrase, _ in hits], ["cancel", "send the draft"])
+        self.assertAlmostEqual(hits[1][1], 10 * 0.08 - 0.8)
+
+    def test_a_phrase_inside_other_speech_or_unsure_does_not_count(self):
+        detector = self.detector()
+        hits = self.feed(detector, {
+            3: self.words(("[unk]", 1.0, 0.1), ("cancel", 1.0, 0.2), ("[unk]", 1.0, 0.3)),
+            6: self.words(("cancel", 0.5, 0.4)),
+            9: self.words(("hey", 1.0, 0.5), ("jarvis", 1.0, 0.6), ("[unk]", 1.0, 0.7)),
+        })
+        self.assertEqual(hits, [])
+
+    def test_phrases_outside_the_vocabulary_are_left_out(self):
+        self.missing.side_effect = [[], ["scratchpad"]]
+        self.detector(phrases=("cancel", "scratchpad", "open the scratchpad", "hey jarvis", "42 go"))
+        self.assertEqual(FakeRecognizer.instances[-1].grammar, ["hey jarvis", "over and out", "cancel", "[unk]"])
+
+    def test_without_phrases_the_vocabulary_is_checked_once(self):
+        self.detector(phrases=())
+        self.missing.assert_called_once()
+
+    def test_free_speech_is_transcribed_with_the_whole_vocabulary(self):
+        class Recognizer(FakeRecognizer):
+            def FinalResult(self):
+                return json.dumps({"text": "make the draft shorter"} if self.grammar is None else {})
+        self.vosk.KaldiRecognizer = Recognizer
+        detector = self.detector()
+        self.assertEqual(detector.transcribe(np.zeros(16000, dtype=np.float32)), "make the draft shorter")
+        self.assertIsNone(Recognizer.instances[-1].grammar)
+
+
+class ListenerPhraseTests(unittest.TestCase):
+    def test_phrase_hits_are_reported_with_when_they_ended(self):
+        clock = Clock()
+        events = []
+
+        class PhraseDetector(ScriptedDetector):
+            phrase_hits = []
+
+            def score(self, frame):
+                result = super().score(frame)
+                self.phrase_hits = [("cancel", 0.2)] if len(self.frames) == 3 else []
+                return result
+
+        listener = WakeWordListener("a", "b", lambda kind, at: events.append((kind, at)), clock=clock)
+        detector = PhraseDetector([])
+        for _ in range(4):
+            clock.now += 0.08
+            listener.process_block(frame(), detector)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0][0], "phrase:cancel")
+        self.assertAlmostEqual(events[0][1], 100.24 - 0.2)
+
+    def test_transcription_needs_an_engine_that_can(self):
+        listener = WakeWordListener("a", "b", mock.Mock())
+        self.assertFalse(listener.can_transcribe())
+        with self.assertRaises(WakeWordError):
+            listener.transcribe(np.zeros(10, dtype=np.float32))
+        listener._detector = types.SimpleNamespace(transcribe=lambda audio: "hello")
+        self.assertTrue(listener.can_transcribe())
+        self.assertEqual(listener.transcribe(np.zeros(10, dtype=np.float32)), "hello")
+
+
+class ListenerPauseTests(unittest.TestCase):
+    QUIET, SPEECH = 0.0005, 0.1
+
+    def listen(self, levels, *, room=20, since=None, **watch):
+        """Feed a quiet room, begin a capture, then feed 80 ms blocks at these levels."""
+        clock = Clock()
+        events = []
+        listener = WakeWordListener("a", "b", lambda kind, at: events.append(kind), clock=clock,
+                                    max_capture_seconds=60)
+        detector = ScriptedDetector([])
+        for _ in range(room):
+            clock.now += 0.08
+            listener.process_block(frame(self.QUIET), detector)
+        listener.begin_capture(since=since(clock) if since else None, **watch)
+        for level in levels:
+            clock.now += 0.08
+            listener.process_block(frame(level), detector)
+        return events
+
+    def test_quiet_after_speech_is_a_pause(self):
+        speech = [self.SPEECH] * 10
+        self.assertEqual(self.listen([self.QUIET] * 6 + speech + [self.QUIET] * 18, pause_seconds=1.5), [])
+        self.assertEqual(self.listen([self.QUIET] * 6 + speech + [self.QUIET] * 19, pause_seconds=1.5), ["pause"])
+
+    def test_a_pause_in_the_middle_does_not_end_it(self):
+        levels = [self.SPEECH] * 10 + [self.QUIET] * 10 + [self.SPEECH] * 10 + [self.QUIET] * 5
+        self.assertEqual(self.listen([self.QUIET] * 6 + levels, pause_seconds=1.5), [])
+
+    def test_nothing_said_is_silence_and_fires_once(self):
+        events = self.listen([self.QUIET] * 80, pause_seconds=1.5, silence_seconds=4.0)
+        self.assertEqual(events, ["silence"])
+
+    def test_the_opening_cue_is_not_speech(self):
+        cue = [self.SPEECH] * 4  # 0.32 s, inside the grace period
+        self.assertEqual(self.listen(cue + [self.QUIET] * 30, pause_seconds=1.5), [])
+
+    def test_quiet_follows_the_room(self):
+        noisy = 0.02
+        clock = Clock()
+        events = []
+        listener = WakeWordListener("a", "b", lambda kind, at: events.append(kind), clock=clock)
+        detector = ScriptedDetector([])
+        for _ in range(70):
+            clock.now += 0.08
+            listener.process_block(frame(noisy), detector)
+        listener.begin_capture(pause_seconds=1.0)
+        for level in [noisy] * 6 + [0.3] * 5 + [noisy] * 14:
+            clock.now += 0.08
+            listener.process_block(frame(level), detector)
+        self.assertEqual(events, ["pause"])
+
+    def test_speech_already_in_the_backfill_counts(self):
+        clock = Clock()
+        events = []
+        listener = WakeWordListener("a", "b", lambda kind, at: events.append(kind), clock=clock)
+        detector = ScriptedDetector([])
+        for level in [self.QUIET] * 20 + [self.SPEECH] * 10:
+            clock.now += 0.08
+            listener.process_block(frame(level), detector)
+        listener.begin_capture(since=clock.now - 0.8, pause_seconds=1.0)
+        for _ in range(13):
+            clock.now += 0.08
+            listener.process_block(frame(self.QUIET), detector)
+        self.assertEqual(events, ["pause"])
+
+    def test_an_event_in_the_backfill_waits_for_the_next_block(self):
+        clock = Clock()
+        events = []
+        listener = WakeWordListener("a", "b", lambda kind, at: events.append(kind), clock=clock)
+        detector = ScriptedDetector([])
+        for level in [self.QUIET] * 20 + [self.SPEECH] * 5 + [self.QUIET] * 15:
+            clock.now += 0.08
+            listener.process_block(frame(level), detector)
+        listener.begin_capture(since=clock.now - 2.0, pause_seconds=1.0)
+        self.assertEqual(events, [])  # the caller may hold a lock the handler takes
+        clock.now += 0.08
+        listener.process_block(frame(self.QUIET), detector)
+        self.assertEqual(events, ["pause"])
+
+    def test_ending_the_capture_ends_the_watch(self):
+        clock = Clock()
+        events = []
+        listener = WakeWordListener("a", "b", lambda kind, at: events.append(kind), clock=clock)
+        detector = ScriptedDetector([])
+        listener.begin_capture(silence_seconds=0.5)
+        listener.end_capture()
+        listener.begin_capture()
+        for _ in range(20):
+            clock.now += 0.08
+            listener.process_block(frame(self.QUIET), detector)
+        self.assertEqual(events, [])
 
 
 if __name__ == "__main__":
