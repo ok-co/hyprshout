@@ -1,10 +1,13 @@
 import hashlib
 import io
+import json
+import os
 import sys
 import tarfile
 import tempfile
 import types
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -402,8 +405,230 @@ class SherpaDetectorTests(unittest.TestCase):
         with mock.patch.object(wake_word, "SherpaKeywordDetector") as sherpa:
             wake_word.make_detector("sherpa", "a", "b", keyword_threshold=0.3, keyword_boost=1.5)
         sherpa.assert_called_once_with("a", "b", threshold=0.3, boost=1.5)
+        with mock.patch.object(wake_word, "VoskKeywordDetector") as vosk:
+            wake_word.make_detector("vosk", "a", "b", vosk_model="pl", vosk_confidence=0.8)
+        vosk.assert_called_once_with("a", "b", model="pl", min_confidence=0.8)
         with self.assertRaisesRegex(WakeWordError, "unknown wake word engine"):
             wake_word.make_detector("porcupine", "a", "b")
+
+
+class VoskPhraseTests(unittest.TestCase):
+    def test_phrases_keep_their_letters_in_any_language(self):
+        self.assertEqual(wake_word.vosk_phrase("Hej Komputer"), "hej komputer")
+        self.assertEqual(wake_word.vosk_phrase("koniec_nagrania"), "koniec nagrania")
+        self.assertEqual(wake_word.vosk_phrase("Zażółć gęślą"), "zażółć gęślą")
+        self.assertEqual(wake_word.vosk_phrase("aujourd'hui"), "aujourd'hui")
+
+    def test_digits_and_model_paths_are_rejected(self):
+        with self.assertRaisesRegex(WakeWordError, "letters only"):
+            wake_word.vosk_phrase("agent 47")
+        with self.assertRaisesRegex(WakeWordError, "openwakeword"):
+            wake_word.vosk_phrase("~/models/x.onnx")
+
+
+def vosk_zip(path, name, extra=()):
+    with zipfile.ZipFile(path, "w") as bundle:
+        bundle.writestr(f"{name}/", "")
+        bundle.writestr(f"{name}/am/final.mdl", "am")
+        bundle.writestr(f"{name}/conf/model.conf", "conf")
+        for entry, data in extra:
+            bundle.writestr(entry, data)
+    return hashlib.md5(Path(path).read_bytes()).hexdigest()
+
+
+class VoskModelTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.models = self.root / "wakeword"
+        self.calls = []
+
+    def download_from(self, archive):
+        def download(url, destination):
+            self.calls.append(url)
+            Path(destination).write_bytes(Path(archive).read_bytes())
+        return download
+
+    def test_language_models_download_once_and_verify(self):
+        archive = self.root / "pl.zip"
+        md5 = vosk_zip(archive, "vosk-model-small-pl-test")
+        with mock.patch.dict(wake_word.VOSK_MODELS, {"pl": ("vosk-model-small-pl-test", md5)}):
+            path = wake_word.vosk_model_dir("PL", self.models, self.download_from(archive))
+            again = wake_word.vosk_model_dir("pl", self.models, self.download_from(archive))
+        self.assertEqual(path, again)
+        self.assertEqual(path, self.models / "vosk" / "vosk-model-small-pl-test")
+        self.assertEqual((path / "am" / "final.mdl").read_text(), "am")
+        self.assertEqual(self.calls, [f"{wake_word.VOSK_MODEL_BASE_URL}/vosk-model-small-pl-test.zip"])
+        self.assertEqual([p.name for p in (self.models / "vosk").iterdir()], ["vosk-model-small-pl-test"])
+
+    def test_iso_codes_resolve_to_vosk_names(self):
+        archive = self.root / "en.zip"
+        md5 = vosk_zip(archive, "vosk-model-small-en-us-test")
+        with mock.patch.dict(wake_word.VOSK_MODELS, {"en-us": ("vosk-model-small-en-us-test", md5)}):
+            path = wake_word.vosk_model_dir("en", self.models, self.download_from(archive))
+        self.assertEqual(path.name, "vosk-model-small-en-us-test")
+
+    def test_checksum_mismatch_and_unsafe_archives_install_nothing(self):
+        cases = (
+            ("0" * 32, (), "checksum"),
+            (None, (("../evil.txt", "x"),), "unexpected path"),
+            (None, (("other/file.txt", "x"),), "unexpected path"),
+        )
+        for md5, extra, error in cases:
+            with self.subTest(error=error, extra=extra):
+                archive = self.root / "bad.zip"
+                digest = vosk_zip(archive, "vosk-model-small-pl-test", extra)
+                with mock.patch.dict(wake_word.VOSK_MODELS, {"pl": ("vosk-model-small-pl-test", md5 or digest)}):
+                    with self.assertRaisesRegex(WakeWordError, error):
+                        wake_word.vosk_model_dir("pl", self.models, self.download_from(archive))
+                self.assertEqual(list((self.models / "vosk").iterdir()), [])
+                self.assertFalse((self.root / "evil.txt").exists())
+
+    def test_unknown_languages_and_paths(self):
+        with self.assertRaisesRegex(WakeWordError, "no Vosk model for 'klingon'"):
+            wake_word.vosk_model_dir("klingon", self.models)
+        with self.assertRaisesRegex(WakeWordError, "not a Vosk model directory"):
+            wake_word.vosk_model_dir(str(self.root / "missing"), self.models)
+        own = self.root / "my-model"
+        (own / "am").mkdir(parents=True)
+        self.assertEqual(wake_word.vosk_model_dir(str(own), self.models), own)
+
+    def test_missing_words_are_read_from_the_native_log(self):
+        class Recognizer:
+            def __init__(self, model, rate, grammar):
+                for word in json.loads(grammar):
+                    if word.startswith("x"):
+                        os.write(2, f"WARNING Ignoring word missing in vocabulary: '{word}'\n".encode())
+
+        fake = types.SimpleNamespace(KaldiRecognizer=Recognizer, SetLogLevel=mock.Mock())
+        self.assertEqual(wake_word._vosk_missing_words(fake, None, ["hej", "xżółw", "koniec"]), ["xżółw"])
+        self.assertEqual(fake.SetLogLevel.call_args_list[-1], mock.call(-1))
+
+
+class FakeRecognizer:
+    """vosk.KaldiRecognizer stand-in: finishes an utterance on scripted frames."""
+
+    instances = []
+
+    def __init__(self, model, rate, grammar=None):
+        self.grammar = json.loads(grammar) if grammar else None
+        self.results = {}  # frame number -> list of words
+        self.frames = 0
+        FakeRecognizer.instances.append(self)
+
+    def SetWords(self, enabled):
+        self.words = enabled
+
+    def AcceptWaveform(self, data):
+        self.frames += 1
+        return self.frames in self.results
+
+    def Result(self):
+        return json.dumps({"result": self.results[self.frames]})
+
+
+class VoskDetectorTests(unittest.TestCase):
+    def setUp(self):
+        FakeRecognizer.instances.clear()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.model = Path(tmp.name) / "model"
+        (self.model / "am").mkdir(parents=True)
+        self.vosk = types.SimpleNamespace(Model=mock.Mock(), KaldiRecognizer=FakeRecognizer, SetLogLevel=mock.Mock())
+        patcher = mock.patch.dict(sys.modules, {"vosk": self.vosk})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        missing = mock.patch.object(wake_word, "_vosk_missing_words", return_value=[])
+        self.missing = missing.start()
+        self.addCleanup(missing.stop)
+
+    def detector(self, start="Hej Komputer", end="koniec nagrania", **kwargs):
+        return wake_word.VoskKeywordDetector(start, end, model=str(self.model), **kwargs)
+
+    @staticmethod
+    def words(*items):
+        return [{"word": w, "conf": c, "end": e} for w, c, e in items]
+
+    def test_grammar_holds_only_the_two_phrases(self):
+        self.detector()
+        self.assertEqual(FakeRecognizer.instances[-1].grammar, ["hej komputer", "koniec nagrania", "[unk]"])
+        self.missing.assert_called_once_with(self.vosk, self.vosk.Model.return_value, ["hej", "komputer", "koniec", "nagrania"])
+
+    def test_confident_phrases_fire_with_their_lag(self):
+        detector = self.detector()
+        recognizer = FakeRecognizer.instances[-1]
+        recognizer.results = {
+            10: self.words(("hej", 1.0, 0.3), ("komputer", 0.95, 0.56)),        # 0.8 s fed
+            20: self.words(("hej", 0.6, 1.2), ("komputer", 1.0, 1.4)),          # too unsure
+            30: self.words(("koniec", 1.0, 1.9), ("nagrania", 1.0, 2.2)),
+        }
+        pcm = np.zeros(FRAME_SAMPLES, dtype=np.int16)
+        scores = [detector.score(pcm) for _ in range(30)]
+        self.assertEqual(scores[9], (1.0, 0.0))
+        self.assertEqual(scores[19], (0.0, 0.0))
+        self.assertEqual(scores[29], (0.0, 1.0))
+        self.assertAlmostEqual(detector.hit_lag["end"], 2.4 - 2.2)
+        self.assertEqual(sum(1 for s in scores if any(s)), 2)
+
+    def test_confidence_is_configurable(self):
+        detector = self.detector(min_confidence=0.5)
+        FakeRecognizer.instances[-1].results = {1: self.words(("hej", 0.6, 0.0), ("komputer", 0.6, 0.08))}
+        self.assertEqual(detector.score(np.zeros(FRAME_SAMPLES, dtype=np.int16)), (1.0, 0.0))
+
+    def test_unknown_words_and_overlapping_phrases_are_errors(self):
+        self.missing.return_value = ["hejże"]
+        with self.assertRaisesRegex(WakeWordError, "not in the model vocabulary: hejże"):
+            self.detector("hejże komputer")
+        self.missing.return_value = []
+        with self.assertRaisesRegex(WakeWordError, "begin with"):
+            self.detector("hej", "hej komputer")
+
+    def test_missing_vosk_is_reported_as_wake_word_error(self):
+        with mock.patch.dict(sys.modules, {"vosk": None}):
+            with self.assertRaisesRegex(WakeWordError, "Vosk is not installed"):
+                self.detector()
+
+
+class ListenerBackfillTests(unittest.TestCase):
+    def test_late_hits_are_dated_when_the_word_ended_and_backfill_the_capture(self):
+        clock = Clock()
+        events = []
+
+        class LateDetector(ScriptedDetector):
+            hit_lag = {}
+
+            def score(self, frame):
+                result = super().score(frame)
+                self.hit_lag = {"start": 0.4} if result[0] else {}
+                return result
+
+        def on_event(kind, at):
+            events.append((kind, at))
+            listener.begin_capture(since=at)
+
+        listener = WakeWordListener("a", "b", on_event, clock=clock)
+        detector = LateDetector([(0.0, 0.0)] * 9 + [(1.0, 0.0)])
+        for _ in range(10):
+            clock.now += 0.08
+            listener.process_block(frame(), detector)
+        self.assertEqual(len(events), 1)
+        self.assertAlmostEqual(events[0][1], clock.now - 0.4)
+        listener.process_block(frame(), detector)
+        audio = listener.end_capture()
+        self.assertEqual(len(audio), int(0.4 * SAMPLE_RATE) + FRAME_SAMPLES)
+
+    def test_backfill_is_bounded_by_what_was_kept(self):
+        clock = Clock()
+        listener = WakeWordListener("a", "b", mock.Mock(), clock=clock, max_capture_seconds=60)
+        detector = ScriptedDetector([])
+        for _ in range(int(wake_word.BACKFILL_SECONDS / 0.08) + 50):
+            clock.now += 0.08
+            listener.process_block(frame(), detector)
+        listener.begin_capture(since=clock.now - 100)
+        self.assertLessEqual(len(listener.end_capture()), wake_word.BACKFILL_SECONDS * SAMPLE_RATE)
+        listener.begin_capture()
+        self.assertEqual(len(listener.end_capture()), 0)
 
 
 if __name__ == "__main__":

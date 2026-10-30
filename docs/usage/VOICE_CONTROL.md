@@ -22,9 +22,10 @@ with a hotkey.
 
 A small always-on wake word engine listens on its own microphone stream and nothing else: no audio is transcribed
 or sent anywhere until you say the start word. Your transcription model isn't loaded for it and never runs while
-you're silent. There are two [engines](#wake-words): [openWakeWord](https://github.com/dscripka/openWakeWord)
-(one trained model per word) and a [sherpa-onnx](https://k2-fsa.github.io/sherpa/onnx/kws/index.html) keyword
-spotter (any English phrase, no training).
+you're silent. There are three [engines](#wake-words): [openWakeWord](https://github.com/dscripka/openWakeWord)
+(one trained model per word), a [sherpa-onnx](https://k2-fsa.github.io/sherpa/onnx/kws/index.html) keyword
+spotter (any English phrase, no training) and [Vosk](https://alphacephei.com/vosk/) (phrases in Polish, German,
+French and 25+ other languages, no training).
 
 The command session is quiet: no overlay, no media ducking, nothing pasted, only a soft ping when it opens and
 closes. Its audio is transcribed by your configured backend and the text goes to a decision model on
@@ -56,6 +57,12 @@ Confidence scales differ between models, so retune `voice_control_min_confidence
    ~/.local/share/hyprwhspr/venv/bin/python -m pip install sherpa-onnx sentencepiece
    ```
 
+   Or, for [phrases in other languages](#other-languages-vosk), Vosk:
+
+   ```bash
+   ~/.local/share/hyprwhspr/venv/bin/python -m pip install vosk
+   ```
+
 2. Store an OpenRouter API key, if LLM refinement doesn't already use one:
 
    ```bash
@@ -74,8 +81,8 @@ Confidence scales differ between models, so retune `voice_control_min_confidence
    systemctl --user restart hyprwhspr
    ```
 
-The first start downloads the wake word models (about 5 MB, or an 18 MB archive for sherpa-onnx of which 6 MB
-is kept) into `~/.local/share/hyprwhspr/wakeword/`. The journal
+The first start downloads the wake word models into `~/.local/share/hyprwhspr/wakeword/`: about 5 MB for
+openWakeWord, an 18 MB archive for sherpa-onnx of which 6 MB is kept, or a 30-50 MB archive for a Vosk language. The journal
 logs `[VOICE] Listening for wake words` once they're loaded.
 
 Requirements:
@@ -122,6 +129,36 @@ download per word. A small keyword spotter ([sherpa-onnx](https://k2-fsa.github.
 - The end phrase can't begin with the start phrase, or the other way round ("computer" and "computer stop").
 - A word fires by accident: raise `voice_control_keyword_threshold` (0.25) a little at a time. Missed: lower it,
   or raise `voice_control_keyword_boost` (1.0). `voice_control_threshold` doesn't apply to this engine.
+
+### Other languages (Vosk)
+
+With `"voice_control_engine": "vosk"`, the words are a phrase in the language of a small
+[Vosk model](https://alphacephei.com/vosk/models), which `voice_control_vosk_model` picks by language code. The
+model downloads once (checked against its published checksum), runs on the CPU and only listens for your two
+phrases. Polish, for example:
+
+```jsonc
+{
+    "voice_control_engine": "vosk",
+    "voice_control_vosk_model": "pl",
+    "voice_control_start_word": "hej komputer",
+    "voice_control_end_word": "koniec nagrania"
+}
+```
+
+Language codes: `ar`, `ca`, `cn` (or `zh`), `cs`, `de`, `en-us` (or `en`), `en-gb`, `en-in`, `eo`, `es`, `fa`, `fr`,
+`gu`, `hi`, `it`, `ja`, `ka`, `ko`, `ky`, `kz`, `nl`, `pl`, `pt`, `ru`, `sv`, `te`, `tg`, `tr`, `ua` (or `uk`), `uz`,
+`vn`. A path to an unpacked Vosk model directory works too, such as a larger model you downloaded yourself.
+
+- Write the phrase the way the language spells it, diacritics included ("zażółć", not "zazolc"). Digits can't be
+  used; write numbers out.
+- Every word must be in the model's vocabulary. A word that isn't stops voice control at start with
+  `not in the ... vocabulary` in the journal; pick another word or a more common form of it.
+- The end phrase can't begin with the start phrase, or the other way round.
+- Vosk confirms a phrase at the short pause after it, so the start cue plays about a second after you finish the
+  phrase. Keep talking if you like: the command's first words are kept.
+- A phrase fires by accident: raise `voice_control_vosk_confidence` (0.9). Missed: lower it a little, to 0.8 or so.
+- The model takes about 200 MB of memory (system RAM, not the GPU) while the service runs.
 
 The word that ends a dictation is cut from its audio, and any part the recognizer still heard is removed from the
 text. If the last word you dictated goes missing, lower `voice_control_end_trim_seconds`; if bits of the end word
@@ -206,12 +243,14 @@ stays off for them.
 ```jsonc
 {
     "voice_control_enabled": false,
-    "voice_control_engine": "openwakeword",       // or "sherpa": any English phrase as a word
+    "voice_control_engine": "openwakeword",       // "sherpa": any English phrase; "vosk": other languages
     "voice_control_start_word": "hey_jarvis",
     "voice_control_end_word": "hey_mycroft",
     "voice_control_threshold": 0.5,               // openwakeword: score that counts as heard (0-1)
     "voice_control_keyword_threshold": 0.25,      // sherpa: trigger probability (0-1)
     "voice_control_keyword_boost": 1.0,           // sherpa: raise if words are missed
+    "voice_control_vosk_model": "en-us",          // vosk: language code (pl, de, ...) or model directory
+    "voice_control_vosk_confidence": 0.9,         // vosk: lowest word confidence that counts as heard
     "voice_control_end_trim_seconds": 1.0,        // audio cut so the end word isn't transcribed
     "voice_control_max_command_seconds": 15,
     "voice_control_cues": true,                   // quiet pings; follows audio_feedback
@@ -229,8 +268,8 @@ stays off for them.
 }
 ```
 
-Words fire by accident? Raise `voice_control_threshold` (sherpa: `voice_control_keyword_threshold`). Missed? Lower
-it, or speak the word a little slower. A
+Words fire by accident? Raise `voice_control_threshold` (sherpa: `voice_control_keyword_threshold`, Vosk:
+`voice_control_vosk_confidence`). Missed? Lower it, or speak the word a little slower. A
 speaker playing near the microphone can trigger them too; a headset avoids that.
 
-Either engine scores 80 ms of audio in a few milliseconds, a few percent of one CPU core while the service runs. Its stream reopens on its own after suspend or an audio server restart.
+Each engine scores 80 ms of audio in a few milliseconds, a few percent of one CPU core while the service runs. Its stream reopens on its own after suspend or an audio server restart.

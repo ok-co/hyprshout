@@ -66,6 +66,8 @@ class VoiceControlMixin:
             engine=engine,
             keyword_threshold=self._get_float_setting('voice_control_keyword_threshold', 0.25),
             keyword_boost=self._get_float_setting('voice_control_keyword_boost', 1.0),
+            vosk_model=self.config.get_setting('voice_control_vosk_model', 'en-us'),
+            vosk_confidence=self._get_float_setting('voice_control_vosk_confidence', 0.9),
         )
         return self._voice_listener.start()
 
@@ -89,7 +91,7 @@ class VoiceControlMixin:
     def _on_wake_event(self, kind, detected_at):
         """Listener callback (its worker thread): decide quickly, hand slow work to a thread."""
         if kind == 'start':
-            self._voice_begin_command()
+            self._voice_begin_command(detected_at)
         elif kind == 'end':
             if self._voice_finish_command(detected_at):
                 return
@@ -100,7 +102,7 @@ class VoiceControlMixin:
             if self._voice_cancel_command("too long - say the end word to finish a command"):
                 self.audio_manager.play_error_sound()
 
-    def _voice_begin_command(self):
+    def _voice_begin_command(self, detected_at=None):
         with self._recording_lock:
             busy = (self.is_recording or self.is_processing or self._recording_starting
                     or self._longform_active)
@@ -111,7 +113,9 @@ class VoiceControlMixin:
                 return
             self._voice_state = 'command'
             self._voice_generation += 1
-            self._voice_listener.begin_capture()
+            # From the end of the start word: an engine that reports it late
+            # (Vosk, at the next pause) must not lose the command's first words
+            self._voice_listener.begin_capture(since=detected_at)
         # The command must not be transcribed over the draft or a reply being read aloud
         self._stop_scratchpad_speech()
         self._stop_assistant_speech()

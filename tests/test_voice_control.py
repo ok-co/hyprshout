@@ -520,6 +520,7 @@ class VoiceControlTests(unittest.TestCase):
         self.assertEqual(args[:2], ('hey_computer', 'over_and_out'))
         self.assertEqual((kwargs['engine'], kwargs['keyword_threshold'], kwargs['keyword_boost']),
                          ('sherpa', 0.4, 2.0))
+        self.assertEqual((kwargs['vosk_model'], kwargs['vosk_confidence']), ('en-us', 0.9))
         self.assertEqual((app._voice_start_phrase, app._voice_end_phrase), ('hey computer', 'over and out'))
 
     def test_unknown_engine_disables_voice_control(self):
