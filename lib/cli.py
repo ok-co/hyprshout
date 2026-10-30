@@ -103,8 +103,10 @@ def main():
     update_parser.add_argument('--python', metavar='PATH')
 
     # config command
-    config_parser = subparsers.add_parser('config', help='Configuration management')
+    config_parser = subparsers.add_parser(
+        'config', help='Configuration management (no action: open the settings editor)')
     config_subparsers = config_parser.add_subparsers(dest='config_action', help='Config actions')
+    config_subparsers.add_parser('tui', help='Edit every setting in a full-screen editor')
     validate_parser = config_subparsers.add_parser('validate', help='Validate configuration without changes')
     validate_parser.add_argument('--json', action='store_true', dest='json_output')
     config_subparsers.add_parser('init', help='Create default config')
@@ -127,6 +129,9 @@ def main():
                                       help='With test: also translate into llm_translate_language')
     config_llm_test_mode.add_argument('--scratchpad', action='store_true',
                                       help='With test: apply TEXT to a copy of the scratchpad draft')
+
+    # settings command
+    subparsers.add_parser('settings', help='Edit every setting, API key and prompt in a full-screen editor')
 
     # waybar command
     waybar_parser = subparsers.add_parser('waybar', help='Waybar integration')
@@ -354,8 +359,16 @@ def main():
             if args.install_action == 'auto':
                 if not omarchy_command(args):
                     sys.exit(1)
+        elif args.command == 'settings' or (args.command == 'config' and args.config_action == 'tui'):
+            from cli.settings_tui import settings_command
+            if not settings_command():
+                sys.exit(1)
         elif args.command == 'config':
             if not args.config_action:
+                if sys.stdin.isatty() and sys.stdout.isatty():
+                    from cli.settings_tui import settings_command
+                    settings_command()
+                    return
                 config_parser.print_help()
                 sys.exit(1)
             if args.config_action == 'validate':

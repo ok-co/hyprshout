@@ -1,22 +1,28 @@
 # Voice control
 
-Run hyprwhspr hands-free. Say the **start word**, speak a short command, say the **end word**. A decision model
-reads the command and picks what happens next:
+Run hyprwhspr hands-free. Say the **start word**, speak a short command, and pause (or say the **end word**). A
+known phrase ("send the draft", "undo", "cancel") runs at once; anything else goes to a decision model that picks
+what happens next:
 
 - **Dictate**: start a dictation, pasted as usual
 - **Dictate raw**: a dictation pasted exactly as spoken, without [LLM refinement](LLM_REFINEMENT.md)
 - **Translate**: a dictation [translated](LLM_REFINEMENT.md#translation) before it's pasted
 - **Scratchpad**: a dictation into the [scratchpad](SCRATCHPAD.md) draft
 - **Draft**: paste, copy, undo, clear or [read aloud](SCRATCHPAD.md#reading-the-draft-aloud) the scratchpad draft
+- **Edit the draft**: an instruction about the draft ("translate the draft into Spanish", "polish it") applied at once
 - **Paste last** / **copy last**: deliver the previous dictation again
 - **Ask**: a question for the [voice assistant](#voice-assistant), answered out loud
 
-A dictation started this way ends when you say the end word. The end word also stops any recording you started
-with a hotkey.
+A dictation started this way ends when you say the end word, or the start word followed by a pause. The start
+word inside a dictation also takes a [dictation command](VOICE_COMMANDS.md#inside-a-dictation): "Hey Jarvis,
+cancel", "Hey Jarvis, into the draft", "Hey Jarvis, submit". Both work in recordings you started with a hotkey too.
 
-> "Hey Jarvis — translate into German — Hey Mycroft" … *speak your text* … "Hey Mycroft"
+> "Hey Jarvis — translate into German" … *speak your text* … "Hey Jarvis"
 
-> "Hey Jarvis — how many tablespoons are in a cup? — Hey Mycroft" … *"Sixteen. Baking, or just curious?"*
+[Voice commands](VOICE_COMMANDS.md) lists everything you can say, in which languages, and how to add your own
+phrases.
+
+> "Hey Jarvis — how many tablespoons are in a cup?" … *"Sixteen. Baking, or just curious?"*
 
 ## How it works
 
@@ -28,7 +34,10 @@ spotter (any English phrase, no training) and [Vosk](https://alphacephei.com/vos
 French and 25+ other languages, no training).
 
 The command session is quiet: no overlay, no media ducking, nothing pasted, only a soft ping when it opens and
-closes. Its audio is transcribed by your configured backend and the text goes to a decision model on
+closes. The command ends at the pause after it (`voice_control_pause_seconds`) or at the end word. A
+[phrase](VOICE_COMMANDS.md#phrases-that-act-at-once) runs straight away: Vosk hears it in the wake word stream,
+other engines match the command's transcript. Anything else is transcribed by your configured backend and the
+text goes to a decision model on
 [OpenRouter's Decisions API](https://openrouter.ai/docs/guides/community/jev). Decision models don't write text;
 they pick one option from a fixed list and report how confident they are. hyprwhspr gives them only the actions
 above, so a command can never run anything else.
@@ -88,7 +97,8 @@ logs `[VOICE] Listening for wake words` once they're loaded.
 Requirements:
 
 - PipeWire or PulseAudio: the wake word stream shares the microphone with recordings, which raw ALSA can't do
-- A local or REST [backend](../backends/OVERVIEW.md); the realtime WebSocket backend can't transcribe commands
+- A local or REST [backend](../backends/OVERVIEW.md). The realtime WebSocket backend can't transcribe commands,
+  unless the engine is Vosk, which [transcribes them itself](VOICE_COMMANDS.md#who-transcribes-a-command)
 - Any recording mode except `long_form`, which has a [pause word](RECORDING_MODES.md#pause-word) instead
 
 ## Wake words
@@ -178,12 +188,16 @@ Say what you want in your own words; these are examples.
 | "send the draft" / "copy the draft" | the draft, pasted or copied |
 | "undo that" / "clear the draft" | the draft's last change undone, or the draft cleared |
 | "read me the draft", "what does the draft say" | the draft read aloud in `scratchpad_voice` |
+| "translate the draft into Spanish", "make the draft more formal" | the draft edited at once |
 | "paste that again" / "copy the last one" | the previous dictation |
 | "what's a good name for a cat", "explain DNS in one sentence" | the question, answered aloud |
 | "Jarvis, I need you", "I have a question" | what you say next, answered aloud |
+| "what can I say" | a notification listing the phrases |
 | "never mind", "cancel" | nothing |
 
-A command the model isn't sure about shows "Didn't understand" with what it heard.
+Short commands like "send the draft", "undo" or "cancel" are [phrases](VOICE_COMMANDS.md#phrases-that-act-at-once):
+they run at once, without the decision model or an API key. A command the model isn't sure about shows "Didn't
+understand" with what it heard.
 
 **Translation** works like the [translate shortcut](LLM_REFINEMENT.md#translation): the LLM translates the
 dictation, whether or not refinement is enabled, and the original is pasted if it fails. A command that names a
@@ -197,9 +211,9 @@ the paste shortcut). Draft actions report failures, such as an empty draft, in a
 
 Ask a question instead of giving a command and the assistant answers it out loud. A command that is itself a
 question is answered at once. One that only calls the assistant ("I need you", "are you there") starts a
-recording: say your question, then the end word.
+recording: say your question, then the end word, or the start word and a pause.
 
-> "Hey Jarvis — I need you — Hey Mycroft" … *ask your question* … "Hey Mycroft"
+> "Hey Jarvis — I need you" … *ask your question* … "Hey Jarvis"
 
 The question goes to the [LLM refinement](LLM_REFINEMENT.md) provider and model (`assistant_model` overrides
 the model), and the reply is read aloud in `assistant_voice` with the
@@ -232,11 +246,13 @@ error, or a [continuous](RECORDING_MODES.md#continuous-mode) recording still lis
 
 - A hotkey or `hyprwhspr record start` during a command cancels the command and starts a normal recording
 - The cancel shortcut or `hyprwhspr record cancel` cancels a command that's still open or being decided
-- The start word is ignored while a recording runs or is being transcribed
+- The start word is ignored while a recording is being transcribed. While one runs, it listens for a
+  [dictation command](VOICE_COMMANDS.md#inside-a-dictation)
+- Saying the start word again drops a command that's still open
 - A command still open after `voice_control_max_command_seconds` is dropped
 
-Voice dictations are always delivered whole after the end word, so [live typing](../backends/REALTIME_WEBSOCKET.md)
-stays off for them.
+Voice dictations are always delivered whole after the end word or the start word, so
+[live typing](../backends/REALTIME_WEBSOCKET.md) stays off for them.
 
 ## Configuration
 
@@ -259,6 +275,13 @@ stays off for them.
     "voice_control_decision_timeout": 10,         // seconds
     "voice_control_min_confidence": 0.5,          // below this: "Didn't understand"
     "voice_control_languages": ["en", "de", "fr", "es", "it", "pt", "nl", "pl"],  // languages a command can name
+    "voice_control_end_on_pause": true,           // a command ends at the pause after it
+    "voice_control_pause_seconds": 1.5,           // quiet that ends a command or a dictation command
+    "voice_control_silence_seconds": 5,           // nothing said after the start word: dropped (0 = never)
+    "voice_control_in_dictation": true,           // the start word in a dictation takes done, cancel, ...
+    "voice_control_command_transcriber": "auto",  // "backend" | "vosk": what transcribes commands
+    "voice_control_announce": true,               // brief notification of what each command did
+    "voice_control_phrases": {},                  // your own phrases (see Voice commands)
     "assistant_model": null,                      // null: llm_refine_model
     "assistant_prompt": null,                     // null: the built-in Jarvis
     "assistant_prompt_file": null,                // wins over assistant_prompt

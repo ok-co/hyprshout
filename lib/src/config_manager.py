@@ -149,6 +149,14 @@ def build_default_config():
         'voice_control_decision_timeout': 10,
         'voice_control_min_confidence': 0.5,     # Below this the decision counts as "didn't understand"
         'voice_control_languages': ['en', 'de', 'fr', 'es', 'it', 'pt', 'nl', 'pl'],  # Languages commands can name
+        # Spoken command phrases (voice_phrases.py): run at once, without the decision model
+        'voice_control_end_on_pause': True,      # A command ends at the pause after it; the end word still works
+        'voice_control_pause_seconds': 1.5,      # Quiet after speech that ends a command or a dictation command
+        'voice_control_silence_seconds': 5,      # Nothing said this long after the start word cancels; 0 = never
+        'voice_control_in_dictation': True,      # The start word inside a dictation listens for done, cancel, ...
+        'voice_control_command_transcriber': 'auto',  # 'auto' | 'backend' | 'vosk': what transcribes free-form commands
+        'voice_control_announce': True,          # Brief notification of what each voice command did
+        'voice_control_phrases': {},             # {"command"|"dictation": {action: [phrases]}} replaces built-in phrases
         # Voice assistant (voice_assistant.py): voice commands that ask a
         # question get an LLM reply on the llm_refine_* provider, read aloud
         # with scratchpad_speech_model

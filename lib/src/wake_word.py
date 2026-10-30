@@ -34,7 +34,7 @@ import time
 import urllib.request
 import zipfile
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Iterable, Optional
 
 import numpy as np
 
@@ -113,6 +113,13 @@ REFIRE_COOLDOWN_S = 1.5
 MIN_GAP_S = 0.5
 # Recent audio kept to backfill a command whose start word was reported late.
 BACKFILL_SECONDS = 10.0
+# A capture can end itself: 'pause' once speech has been followed by this
+# much quiet, 'silence' when nothing was said at all. Quiet is relative to
+# the room: PAUSE_FACTOR times the quietest level of the last few seconds.
+PAUSE_FLOOR_SECONDS = 5.0
+PAUSE_FACTOR = 3.0
+PAUSE_MIN_LEVEL = 2e-3
+PAUSE_GRACE_SECONDS = 0.4  # the cue that opens a capture is not speech
 # No audio for this long means the stream died (suspend, server restart).
 STALL_TIMEOUT_S = 3.0
 REOPEN_BACKOFF_S = (1.0, 2.0, 5.0, 10.0)
@@ -450,10 +457,17 @@ class VoskKeywordDetector:
     A phrase counts when a finished utterance contains all its words, each
     at least min_confidence. Utterances finish at the next pause, so
     hit_lag says how long ago the phrase ended.
+
+    phrases are command phrases (voice_phrases) that join the grammar. One
+    is reported in phrase_hits when an utterance is that phrase and nothing
+    else, or the start phrase followed by it ("hey jarvis cancel"); phrases
+    outside the model's vocabulary are left out. transcribe() recognizes
+    free speech with the same model, for commands the phrases don't cover.
     """
 
     def __init__(self, start_word, end_word, model_dir: Path = WAKEWORD_MODELS_DIR, *,
-                 model='en-us', min_confidence: float = 0.9, download: Optional[Callable] = None):
+                 model='en-us', min_confidence: float = 0.9, download: Optional[Callable] = None,
+                 phrases: Iterable[str] = ()):
         try:
             import vosk
         except ImportError as e:
@@ -473,37 +487,83 @@ class VoskKeywordDetector:
         if missing:
             raise WakeWordError(f"not in the {path.name} vocabulary: {', '.join(missing)}; "
                                 'pick other words or spellings')
-        grammar = [' '.join(phrase) for phrase in self._phrases.values()] + ['[unk]']
+        self._vosk = vosk
+        self._commands = self._usable_phrases(phrases, path.name)
+        grammar = ([' '.join(phrase) for phrase in self._phrases.values()] + sorted(self._commands)
+                   + ['[unk]'])
         self._recognizer = vosk.KaldiRecognizer(self._model, SAMPLE_RATE, json.dumps(grammar, ensure_ascii=False))
         self._recognizer.SetWords(True)
         self._min_confidence = float(min_confidence)
         self._samples = 0
         self.hit_lag = {}
+        self.phrase_hits = []
+
+    def _usable_phrases(self, phrases, model_name):
+        """The command phrases this model can recognize; the rest are logged and left out."""
+        wake = {' '.join(words) for words in self._phrases.values()}
+        wanted = []
+        for phrase in phrases or ():
+            words = phrase.split() if isinstance(phrase, str) else []
+            if words and ' '.join(words) not in wake and all(re.fullmatch(r"[^\W\d_]+(['-][^\W\d_]+)*", w)
+                                                           for w in words):
+                wanted.append(' '.join(words))
+        if not wanted:
+            return set()
+        missing = set(_vosk_missing_words(self._vosk, self._model, sorted({w for p in wanted for w in p.split()})))
+        usable = {p for p in wanted if not missing.intersection(p.split())}
+        if len(usable) < len(set(wanted)):
+            log(f"[VOICE] {len(set(wanted)) - len(usable)} command phrases are not in the {model_name} "
+                f"vocabulary and are left out ({', '.join(sorted(missing)[:8])})")
+        return usable
 
     def score(self, frame: np.ndarray):
         self._samples += frame.size
         self.hit_lag = {}
+        self.phrase_hits = []
         if not self._recognizer.AcceptWaveform(frame.astype(np.int16).tobytes()):
             return 0.0, 0.0
         words = json.loads(self._recognizer.Result()).get('result', [])
         now = self._samples / SAMPLE_RATE
+        after_start = 0
         for kind, phrase in self._phrases.items():
             for i in range(len(words) - len(phrase) + 1):
                 window = words[i:i + len(phrase)]
                 if ([w.get('word') for w in window] == phrase
                         and min(float(w.get('conf', 0.0)) for w in window) >= self._min_confidence):
                     self.hit_lag[kind] = max(0.0, now - float(window[-1].get('end', now)))
+                    if kind == 'start':
+                        after_start = i + len(phrase)
+        if self._commands:
+            self._spot_command(words[after_start:], now)
         return (1.0 if 'start' in self.hit_lag else 0.0), (1.0 if 'end' in self.hit_lag else 0.0)
+
+    def _spot_command(self, words, now):
+        """A command phrase that makes up all of these words, every one confident."""
+        if not words or min(float(w.get('conf', 0.0)) for w in words) < self._min_confidence:
+            return
+        phrase = ' '.join(str(w.get('word', '')) for w in words)
+        if phrase in self._commands:
+            self.phrase_hits.append((phrase, max(0.0, now - float(words[-1].get('end', now)))))
+
+    def transcribe(self, audio: np.ndarray) -> str:
+        """Free speech in 16 kHz float32 audio, recognized with the whole vocabulary."""
+        recognizer = self._vosk.KaldiRecognizer(self._model, SAMPLE_RATE)
+        pcm = (np.clip(np.asarray(audio, dtype=np.float32), -1.0, 1.0) * 32767).astype(np.int16)
+        recognizer.AcceptWaveform(pcm.tobytes())
+        return str(json.loads(recognizer.FinalResult()).get('text', '')).strip()
 
 
 def make_detector(engine, start_word, end_word, *, keyword_threshold: float = 0.25,
-                  keyword_boost: float = 1.0, vosk_model='en-us', vosk_confidence: float = 0.9):
+                  keyword_boost: float = 1.0, vosk_model='en-us', vosk_confidence: float = 0.9,
+                  phrases: Iterable[str] = ()):
+    """The engine's detector; only Vosk listens for command phrases."""
     if engine == 'openwakeword':
         return OpenWakeWordDetector(start_word, end_word)
     if engine == 'sherpa':
         return SherpaKeywordDetector(start_word, end_word, threshold=keyword_threshold, boost=keyword_boost)
     if engine == 'vosk':
-        return VoskKeywordDetector(start_word, end_word, model=vosk_model, min_confidence=vosk_confidence)
+        return VoskKeywordDetector(start_word, end_word, model=vosk_model, min_confidence=vosk_confidence,
+                                   phrases=phrases)
     raise WakeWordError(f"unknown wake word engine {engine!r}; use {' or '.join(ENGINES)}")
 
 
@@ -544,13 +604,17 @@ class WakeWordListener:
 
     on_event(kind, detected_at) runs on the worker thread with kind 'start',
     'end' or 'capture_limit' and a time.monotonic() stamp of when the word
-    ended. It must return quickly: audio queues up while it runs.
+    ended. It must return quickly: audio queues up while it runs. A Vosk
+    listener given command phrases also reports 'phrase:<words>', and a
+    capture begun with pause_seconds or silence_seconds reports 'pause' or
+    'silence' once.
     """
 
     def __init__(self, start_word, end_word, on_event: Callable, *, threshold: float = 0.5,
                  device=None, max_capture_seconds: float = 15.0,
                  engine: str = 'openwakeword', keyword_threshold: float = 0.25,
                  keyword_boost: float = 1.0, vosk_model='en-us', vosk_confidence: float = 0.9,
+                 phrases: Iterable[str] = (),
                  detector_factory: Optional[Callable] = None,
                  stream_factory: Optional[Callable] = None,
                  clock: Callable[[], float] = time.monotonic):
@@ -563,7 +627,7 @@ class WakeWordListener:
         self._detector_factory = detector_factory or (
             lambda: make_detector(engine, start_word, end_word, keyword_threshold=keyword_threshold,
                                   keyword_boost=keyword_boost, vosk_model=vosk_model,
-                                  vosk_confidence=vosk_confidence))
+                                  vosk_confidence=vosk_confidence, phrases=phrases))
         self._stream_factory = stream_factory or _default_stream_factory
         self._clock = clock
 
@@ -583,6 +647,11 @@ class WakeWordListener:
         self._recent = collections.deque()  # the last BACKFILL_SECONDS of 16 kHz blocks
         self._recent_samples = 0
         self._recent_until = float('-inf')  # clock when the newest block arrived
+        self._levels = collections.deque()  # (level, samples) of the last PAUSE_FLOOR_SECONDS
+        self._levels_samples = 0
+        self._watch = None  # what the capture listens for: see begin_capture()
+        self._deferred = []  # watch events begin_capture() found, reported with the next block
+        self._detector = None
         self.ready = threading.Event()  # set once the models are loaded
 
     # ------------------------ Lifecycle ------------------------
@@ -605,7 +674,7 @@ class WakeWordListener:
 
     def _run(self):
         try:
-            detector = self._detector_factory()
+            detector = self._detector = self._detector_factory()
         except Exception as e:
             log(f"[VOICE] Wake word listener disabled: {e}")
             return
@@ -669,8 +738,8 @@ class WakeWordListener:
 
     def process_block(self, block: np.ndarray, detector):
         """Feed 16 kHz float32 audio: capture it, score whole frames, fire events."""
-        self._append_capture(block)
         self._remember(block)
+        self._append_capture(block)
         self._pending = np.concatenate([self._pending, block]) if self._pending.size else block
         while self._pending.size >= FRAME_SAMPLES:
             frame, self._pending = self._pending[:FRAME_SAMPLES], self._pending[FRAME_SAMPLES:]
@@ -681,6 +750,9 @@ class WakeWordListener:
             for kind, score in (('start', start_score), ('end', end_score)):
                 if self._should_fire(kind, score, now):
                     self._fire(kind, now, now - float(lag.get(kind, 0.0)))
+            for phrase, phrase_lag in getattr(detector, 'phrase_hits', None) or ():
+                log(f"[VOICE] Heard command phrase {phrase!r}")
+                self._emit(f'phrase:{phrase}', now - float(phrase_lag))
 
     def _should_fire(self, kind, score, now) -> bool:
         if score < self.threshold * 0.5:
@@ -697,23 +769,55 @@ class WakeWordListener:
         self._last_fire[kind] = now
         self._last_any_fire = now
         log(f"[VOICE] Heard {'start' if kind == 'start' else 'end'} word")
+        self._emit(kind, now if detected_at is None else detected_at)
+
+    def _emit(self, kind, at):
         try:
-            self._on_event(kind, now if detected_at is None else detected_at)
+            self._on_event(kind, at)
         except Exception as e:
             log(f"[VOICE] Wake word handler failed: {e}")
 
+    # ------------------------ Local transcription ------------------------
+
+    def can_transcribe(self) -> bool:
+        """True once the engine is loaded and can recognize free speech (Vosk)."""
+        return callable(getattr(self._detector, 'transcribe', None))
+
+    def transcribe(self, audio: np.ndarray) -> str:
+        """Recognize a captured command with the wake word engine itself."""
+        transcribe = getattr(self._detector, 'transcribe', None)
+        if not callable(transcribe):
+            raise WakeWordError('this wake word engine cannot transcribe; use voice_control_engine vosk')
+        return transcribe(audio)
+
     # ------------------------ Command capture ------------------------
 
-    def begin_capture(self, since: Optional[float] = None):
+    def begin_capture(self, since: Optional[float] = None, *, pause_seconds: float = 0.0,
+                      silence_seconds: float = 0.0):
         """Keep the audio from now on until end_capture() or cancel_capture().
 
         since (a clock stamp, such as a start word's detected_at) also keeps
         the recent audio after it, up to BACKFILL_SECONDS.
+
+        pause_seconds > 0 reports 'pause' once speech in the capture has been
+        followed by that much quiet; silence_seconds > 0 reports 'silence'
+        when that long passes with nothing said. Either ends the watch. An
+        event the backfill already holds is reported with the next block, on
+        the worker thread: the caller may hold its own lock here.
         """
         with self._capture_lock:
             self._capture = []
             self._capture_samples = 0
             self._capture_limit_hit = False
+            self._watch = None
+            if pause_seconds > 0 or silence_seconds > 0:
+                self._watch = {
+                    'pause': int(max(0.0, pause_seconds) * SAMPLE_RATE),
+                    'silence': int(max(0.0, silence_seconds) * SAMPLE_RATE),
+                    'grace': int(PAUSE_GRACE_SECONDS * SAMPLE_RATE),
+                    'threshold': self._quiet_threshold(),
+                    'speech': False, 'quiet': 0, 'elapsed': 0,
+                }
             if since is not None and self._recent_samples:
                 wanted = int(min(BACKFILL_SECONDS, self._recent_until - since) * SAMPLE_RATE)
                 if wanted > 0:
@@ -721,8 +825,38 @@ class WakeWordListener:
                     recent = recent[:self._max_capture_samples]
                     self._capture.append(recent)
                     self._capture_samples = recent.size
+                    for start in range(0, recent.size, FRAME_SAMPLES):
+                        self._deferred += self._watch_step(recent[start:start + FRAME_SAMPLES], live=False)
+
+    def _quiet_threshold(self) -> float:
+        heard = [level for level, _ in self._levels if level > 1e-5]
+        floor = min(heard) if heard else 0.0
+        return max(floor * PAUSE_FACTOR, PAUSE_MIN_LEVEL)
+
+    def _watch_step(self, block, live=True):
+        """Advance the capture's pause watch by one block (capture lock held); events to report."""
+        watch = self._watch
+        if watch is None or not block.size:
+            return []
+        level = float(np.sqrt(np.mean(np.square(block, dtype=np.float64))))
+        if live and watch['grace'] > 0:
+            watch['grace'] -= block.size
+            level = 0.0
+        watch['elapsed'] += block.size
+        if level >= watch['threshold']:
+            watch['speech'], watch['quiet'] = True, 0
+        else:
+            watch['quiet'] += block.size
+        if watch['speech'] and watch['pause'] and watch['quiet'] >= watch['pause']:
+            self._watch = None
+            return ['pause']
+        if not watch['speech'] and watch['silence'] and watch['elapsed'] >= watch['silence']:
+            self._watch = None
+            return ['silence']
+        return []
 
     def _remember(self, block):
+        level = float(np.sqrt(np.mean(np.square(block, dtype=np.float64)))) if block.size else 0.0
         with self._capture_lock:
             self._recent.append(block)
             self._recent_samples += block.size
@@ -730,11 +864,18 @@ class WakeWordListener:
             limit = int(BACKFILL_SECONDS * SAMPLE_RATE)
             while self._recent and self._recent_samples - self._recent[0].size >= limit:
                 self._recent_samples -= self._recent.popleft().size
+            self._levels.append((level, block.size))
+            self._levels_samples += block.size
+            limit = int(PAUSE_FLOOR_SECONDS * SAMPLE_RATE)
+            while self._levels and self._levels_samples - self._levels[0][1] >= limit:
+                self._levels_samples -= self._levels.popleft()[1]
 
     def cancel_capture(self):
         with self._capture_lock:
             self._capture = None
             self._capture_samples = 0
+            self._watch = None
+            self._deferred = []
 
     def capturing(self) -> bool:
         with self._capture_lock:
@@ -745,6 +886,8 @@ class WakeWordListener:
         with self._capture_lock:
             blocks, self._capture = self._capture, None
             self._capture_samples = 0
+            self._watch = None
+            self._deferred = []
         if blocks is None:
             return None
         audio = np.concatenate(blocks) if blocks else np.zeros(0, dtype=np.float32)
@@ -762,8 +905,8 @@ class WakeWordListener:
                 self._capture_limit_hit = fire = True
             self._capture.append(block)
             self._capture_samples += block.size
+            events, self._deferred = self._deferred + self._watch_step(block), []
+        for kind in events:
+            self._emit(kind, self._clock())
         if fire:
-            try:
-                self._on_event('capture_limit', self._clock())
-            except Exception as e:
-                log(f"[VOICE] Wake word handler failed: {e}")
+            self._emit('capture_limit', self._clock())

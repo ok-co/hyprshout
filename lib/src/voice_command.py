@@ -38,8 +38,11 @@ ACTIONS = {
     'dictate_raw': 'Start a dictation typed exactly as spoken, without AI cleanup or rewriting '
                    '(verbatim, raw, exact words).',
     'translate': 'Start a dictation that is translated into another language before it is typed.',
-    'scratchpad': 'Start a dictation into the scratchpad draft: new text for the draft, or an '
-                  'instruction to change it (take a note, add to the draft, edit the draft).',
+    'scratchpad': 'Start a dictation into the scratchpad draft: the user dictates new text for the '
+                  'draft, or an instruction to change it, next (take a note, add to the draft).',
+    'scratchpad_edit': 'Change the existing scratchpad draft right now; the command itself is the '
+                       'instruction (translate the draft into Spanish, make the draft shorter, turn '
+                       'the draft into a list, rewrite it as a prompt).',
     'scratchpad_paste': 'Paste the scratchpad draft into the focused application (send the draft).',
     'scratchpad_copy': 'Copy the scratchpad draft to the clipboard.',
     'scratchpad_undo': 'Undo the last change to the scratchpad draft.',
@@ -51,6 +54,7 @@ ACTIONS = {
                  'I have a question): what the user says next is answered out loud.',
     'paste_last': 'Paste the previous dictation again.',
     'copy_last': 'Copy the previous dictation to the clipboard.',
+    'help': 'The user asks what they can say or how voice control works.',
     'nothing': 'None of these: unclear, unrelated, or the user cancels or changes their mind.',
 }
 
@@ -83,6 +87,7 @@ class DictationPlan:
     route: str = 'paste'                      # the recording route: 'paste' | 'translate' | 'scratchpad' | 'assistant'
     raw: bool = False                         # paste without LLM refinement
     translate_language: Optional[str] = None  # this dictation's target instead of llm_translate_language
+    submit: bool = False                      # press Enter after the paste, whatever auto_submit says
 
 
 DICTATION_PLANS = {

@@ -195,7 +195,8 @@ Managed release rollout and recovery: [installation guide](docs/MANAGED_INSTALLA
 - `hyprwhspr update [--version VERSION]` - Update a managed release
 - `hyprwhspr install status` - Inspect managed installation state
 - `hyprwhspr install repair [--python PATH]` - Repair a managed installation
-- `hyprwhspr config` - Manage configuration (`show` / `show --all` / `edit` / `secondary-shortcut`)
+- `hyprwhspr settings` - Edit every setting, API key and custom prompt in a full-screen editor
+- `hyprwhspr config` - Manage configuration (`show` / `show --all` / `edit` / `secondary-shortcut`); no action opens the settings editor
 - `hyprwhspr model` - Manage models (`download` / `list` / `status` / `unload` / `reload`)
 - `hyprwhspr record` - External hotkey control (`start` / `stop` / `toggle` / `cancel` / `capture` / `status` / `copy-last` / `paste-last` / `clear-last`)
 - `hyprwhspr transcribe INPUT` - Transcribe a WAV or MP3 file to stdout (use `-o PATH` to write a file)

@@ -280,6 +280,9 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
         self._voice_plan = None
         self._voice_start_phrase = None
         self._voice_end_phrase = None
+        self._voice_phrasebook = None   # voice_phrases.PhraseBook, built when voice control starts
+        self._voice_window_at = None    # when the start word opened a window inside a dictation
+        self._voice_strip_phrases = []  # words said to voice control mid-dictation, cut from its text
         self._assistant = None  # voice_assistant.Conversation, made on the first question
         self._assistant_speech = None  # SpeechPlayer for the assistant's replies, made on first use
 
@@ -740,7 +743,7 @@ if __name__ == "__main__":
     # Keep in sync with the subcommand route in bin/hyprwhspr
     CLI_SUBCOMMANDS = ['update', 'setup', 'install', 'config', 'waybar', 'noctalia', 'systemd', 'status',
                        'model', 'validate', 'uninstall', 'backend', 'state', 'mic-osd',
-                       'keyboard', 'record', 'scratchpad', 'test', 'transcribe']
+                       'keyboard', 'record', 'scratchpad', 'settings', 'test', 'transcribe']
     if len(sys.argv) > 1 and sys.argv[1] in CLI_SUBCOMMANDS:
         log(f"[REDIRECT] Detected CLI subcommand '{sys.argv[1]}', redirecting to CLI...")
         # Execute CLI with same arguments
