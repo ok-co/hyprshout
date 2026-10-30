@@ -264,6 +264,9 @@ def build_default_config():
         'long_form_submit_shortcut': None,   # Shortcut to submit long-form recording (e.g., "Super+Return")
         'long_form_temp_limit_mb': 500,      # Max temp storage in MB for long-form segments
         'long_form_auto_save_interval': 300, # Auto-save interval in seconds (default: 5 minutes)
+        'long_form_auto_pause_seconds': 0,   # Quiet this long holds the recording until speech resumes (0 = off)
+        'long_form_silence_threshold': 0,    # Auto-pause silence level (0 = calibrate each session)
+        'long_form_pause_word': '',          # Wake word that pauses/resumes the session ('' = off)
         # Audio stream cold-start recovery
         # How long (seconds) to wait between stream.start() retries when PortAudio times out.
         # Increase this if your USB mic frequently fails on the first recording after idle.
