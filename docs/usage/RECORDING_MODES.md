@@ -97,7 +97,7 @@ Stop keeping audio while you're quiet, so long sessions stay small and transcrib
 ```jsonc
 {
     "long_form_auto_pause_seconds": 3,  // Quiet this long pauses. 0 (default) = off.
-    "long_form_silence_threshold": 0    // Silence level. 0 (default) = calibrate each session.
+    "long_form_silence_threshold": 0    // Silence level. 0 (default) = follow the room.
 }
 ```
 
@@ -105,8 +105,11 @@ Stop keeping audio while you're quiet, so long sessions stay small and transcrib
 - Speak again and recording resumes on its own, with a soft ping. The second before you spoke is kept, so the
   first word isn't cut.
 - The session stays open: the shortcut still pauses it for real, and submit sends everything recorded.
-- Calibration hears the first half second of the session, so start in quiet. The log prints the calibrated
-  level. If quiet doesn't pause, or speech doesn't resume, set `long_form_silence_threshold` from there.
+- Silence is judged against your room: three times the quietest level of the last few seconds, so it adapts
+  to background noise on its own.
+- The journal shows each step: `Auto-pause after 3s of silence` when recording starts, then the level and
+  threshold at every pause and resume (`journalctl --user -u hyprwhspr -f`). If quiet doesn't pause, or speech
+  doesn't resume, set `long_form_silence_threshold` between the levels shown there.
 
 ### Pause word
 
