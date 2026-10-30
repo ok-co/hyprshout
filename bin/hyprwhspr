@@ -134,7 +134,7 @@ if [[ "$1" == "test" || "$1" == "transcribe" ]]; then
   require_app_venv
   exec "$PYTHON_CMD" -B "$LIB_DIR/cli.py" "$@"
 fi
-if [[ "$1" =~ ^(update|setup|install|config|waybar|noctalia|systemd|status|model|validate|uninstall|backend|state|mic-osd|keyboard|record|scratchpad|test|transcribe)$ ]]; then
+if [[ "$1" =~ ^(update|setup|install|config|waybar|noctalia|systemd|status|model|validate|uninstall|backend|state|mic-osd|keyboard|record|scratchpad|settings|test|transcribe)$ ]]; then
   exec "$CLI_PYTHON" -B "$LIB_DIR/cli.py" "$@"
 fi
 
