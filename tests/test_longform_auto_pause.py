@@ -29,27 +29,58 @@ def load_audio_capture():
 
 
 class SilenceTrackerTests(unittest.TestCase):
-    def test_calibrates_from_the_quietest_poll(self):
-        tracker = SilenceTracker(1.0)
-        for level in (0.01, 0.002, 0.03, 0.004, 0.02):
-            self.assertIsNone(tracker.step(level, held=False))
-            self.assertIsNone(tracker.threshold)
-        self.assertIsNone(tracker.step(0.05, held=False))
-        self.assertAlmostEqual(tracker.threshold, 0.004)
+    def feed(self, tracker, levels, held=False):
+        return [tracker.step(level, held) for level in levels]
 
-    def test_calibration_has_a_floor(self):
-        tracker = SilenceTracker(1.0)
-        for _ in range(SilenceTracker.CALIBRATION_POLLS):
-            tracker.step(0.0, held=False)
-        self.assertEqual(tracker.threshold, 2e-4)
+    def warm_up(self, tracker, level=0.0):
+        self.feed(tracker, [level] * SilenceTracker.WARMUP_POLLS)
 
-    def test_holds_after_the_quiet_and_releases_on_speech(self):
+    def test_warm_up_is_ignored(self):
+        tracker = SilenceTracker(0.1)
+        polls = SilenceTracker.WARMUP_POLLS
+        self.assertEqual(self.feed(tracker, [0.0] * polls), [None] * polls)
+        self.assertIsNone(tracker.floor)
+
+    def test_threshold_follows_the_quietest_recent_level(self):
+        tracker = SilenceTracker(10.0)
+        self.warm_up(tracker, 0.5)  # the start beep
+        self.feed(tracker, [0.01, 0.002, 0.03])
+        self.assertEqual(tracker.floor, 0.002)
+        self.assertAlmostEqual(tracker.threshold, 0.002 * SilenceTracker.THRESHOLD_FACTOR)
+
+    def test_a_too_quiet_start_ages_out(self):
+        # The stream starts near-silent; the room is louder than 3x that
+        tracker = SilenceTracker(2.0)
+        self.warm_up(tracker)
+        self.feed(tracker, [1e-4] * 5)
+        actions = self.feed(tracker, [0.001] * 80)
+        self.assertIn('hold', actions)
+        self.assertLessEqual(actions.index('hold'), 50 + 20)
+        self.assertEqual(tracker.floor, 0.001)
+
+    def test_the_last_floor_seeds_a_resume(self):
+        tracker = SilenceTracker(1.0, floor=0.003)
+        self.assertAlmostEqual(tracker.threshold, 0.009)
+
+    def test_digital_silence_says_nothing_about_the_room(self):
+        tracker = SilenceTracker(1.0)
+        self.warm_up(tracker)
+        self.feed(tracker, [0.003, 0.0, 0.0])
+        self.assertAlmostEqual(tracker.floor, 0.003)
+
+    def test_threshold_has_a_minimum(self):
+        tracker = SilenceTracker(1.0)
+        self.assertEqual(tracker.threshold, SilenceTracker.MIN_THRESHOLD)
+
+    def test_holds_after_the_quiet_and_releases_on_speech_after_the_ping(self):
         tracker = SilenceTracker(0.3, threshold=0.01)
+        self.warm_up(tracker)
         self.assertIsNone(tracker.step(0.001, held=False))
         self.assertIsNone(tracker.step(0.05, held=False))  # speech resets the count
-        self.assertIsNone(tracker.step(0.001, held=False))
-        self.assertIsNone(tracker.step(0.001, held=False))
-        self.assertEqual(tracker.step(0.001, held=False), 'hold')
+        self.assertEqual(self.feed(tracker, [0.001] * 3), [None, None, 'hold'])
+        # The pause ping is loud but it is not speech
+        self.assertEqual(self.feed(tracker, [0.05] * SilenceTracker.HOLD_GRACE_POLLS, held=True),
+                         [None] * SilenceTracker.HOLD_GRACE_POLLS)
         self.assertIsNone(tracker.step(0.001, held=True))
         self.assertEqual(tracker.step(0.02, held=True), 'release')
         self.assertIsNone(tracker.step(0.02, held=False))
@@ -148,7 +179,7 @@ class ControllerTests(unittest.TestCase):
 
     def step(self, controller, action, seconds=2.0):
         generation = self.threads[-1]['args'][0]
-        tracker = mock.Mock(threshold=0.01)
+        tracker = mock.Mock(threshold=0.01, level=0.001, floor=0.003)
         tracker.step.return_value = action
         return controller.auto_pause_step(generation, tracker, seconds)
 
@@ -195,7 +226,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(len(self.threads), 2)
         self.assertTrue(self.step(controller, None))
 
-    def test_the_calibrated_threshold_carries_over_to_a_resume(self):
+    def test_the_noise_floor_carries_over_to_a_resume(self):
         controller = self.started()
         self.step(controller, None)
         controller.primary_shortcut()
@@ -204,7 +235,7 @@ class ControllerTests(unittest.TestCase):
         stop_event.set()
         with mock.patch.object(longform_controller, 'SilenceTracker') as tracker:
             controller._auto_pause_loop(generation, stop_event, seconds)
-        tracker.assert_called_once_with(2.0, 0.01)
+        tracker.assert_called_once_with(2.0, 0.0, floor=0.003)
 
     def test_monitor_retired_on_submit_and_cancel(self):
         for finish in ('cancel_shortcut', 'submit_shortcut'):

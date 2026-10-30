@@ -953,7 +953,7 @@
       "type": "number",
       "minimum": 0,
       "default": 0,
-      "description": "Audio level below which long-form auto-pause counts as silence. 0 = calibrate from the start of each session"
+      "description": "Audio level below which long-form auto-pause counts as silence. 0 = follow the room's noise floor"
     },
     "long_form_pause_word": {
       "type": "string",

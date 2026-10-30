@@ -2,6 +2,7 @@
 
 import threading
 import time
+from collections import deque
 
 try:
     from .hallucination import is_hallucination
@@ -24,34 +25,59 @@ PAUSE_WORD_RESUME_WINDOW_S = 0.5  # beyond the word: an auto-resume this close t
 class SilenceTracker:
     """Decide when a recording goes quiet ('hold') and when speech returns ('release').
 
-    threshold 0 calibrates from the first polls: twice their quietest level,
-    the rule continuous mode uses.
+    With threshold 0 the silence level follows the room: THRESHOLD_FACTOR
+    times the noise floor, the quietest level of the last FLOOR_WINDOW_S. A
+    misleading start (a stream warming up, the start sound) ages out of the
+    window. A fixed threshold overrides it.
     """
 
-    CALIBRATION_POLLS = 6
+    WARMUP_POLLS = 10       # stream start-up and the start sound
+    HOLD_GRACE_POLLS = 5    # the pause ping itself is not speech
+    FLOOR_WINDOW_S = 5.0
+    THRESHOLD_FACTOR = 3.0
+    MIN_THRESHOLD = 2e-4
+    DIGITAL_SILENCE = 1e-5  # muted or not yet flowing; says nothing about the room
 
-    def __init__(self, pause_seconds, threshold=0.0, poll_seconds=AUTO_PAUSE_POLL_S):
+    def __init__(self, pause_seconds, threshold=0.0, floor=None, poll_seconds=AUTO_PAUSE_POLL_S):
         self.polls_needed = max(1, int(round(pause_seconds / poll_seconds)))
-        self.threshold = threshold if threshold and threshold > 0 else None
-        self._calibration = []
+        self.fixed_threshold = threshold if threshold and threshold > 0 else None
+        self._levels = deque(maxlen=max(1, int(round(self.FLOOR_WINDOW_S / poll_seconds))))
+        if floor:
+            self._levels.append(floor)  # the last session's room, until this one is heard
+        self.level = 0.0
+        self._polls = 0
         self._quiet = 0
+        self._grace = 0
+
+    @property
+    def floor(self):
+        return min(self._levels) if self._levels else None
+
+    @property
+    def threshold(self):
+        if self.fixed_threshold is not None:
+            return self.fixed_threshold
+        return max((self.floor or 0.0) * self.THRESHOLD_FACTOR, self.MIN_THRESHOLD)
 
     def step(self, level, held):
-        if self.threshold is None:
-            self._calibration.append(level)
-            if len(self._calibration) < self.CALIBRATION_POLLS:
-                return None
-            self.threshold = max(min(self._calibration) * 2, 2e-4)
-            print(f"[LONGFORM] Auto-pause calibrated threshold={self.threshold:.5f}", flush=True)
+        self.level = level
+        self._polls += 1
+        if self._polls <= self.WARMUP_POLLS:
             return None
+        if level > self.DIGITAL_SILENCE:
+            self._levels.append(level)
+        if held:
+            if self._grace > 0:
+                self._grace -= 1
+                return None
+            return 'release' if level >= self.threshold else None
         if level >= self.threshold:
             self._quiet = 0
-            return 'release' if held else None
-        if held:
             return None
         self._quiet += 1
         if self._quiet >= self.polls_needed:
             self._quiet = 0
+            self._grace = self.HOLD_GRACE_POLLS
             return 'hold'
         return None
 
@@ -116,7 +142,7 @@ class LongFormController:
         self.auto_paused = False
         self._auto_pause_generation = 0
         self._auto_pause_stop = None
-        self._auto_pause_threshold = None  # calibrated once per session
+        self._auto_pause_floor = None  # the room's noise floor, kept across resumes
         self._auto_resumed_at = None
         self._auto_resume_preroll = 0.0
 
@@ -277,7 +303,7 @@ class LongFormController:
             self._abandon_claim()
             return
 
-        self._auto_pause_threshold = None
+        self._auto_pause_floor = None
         self._set_state('RECORDING', visualizer='recording')
         self.show_mic_osd()
         self.start_auto_save_timer()
@@ -505,6 +531,7 @@ class LongFormController:
         generation = self._auto_pause_generation
         stop_event = threading.Event()
         self._auto_pause_stop = stop_event
+        print(f"[LONGFORM] Auto-pause after {seconds:g}s of silence", flush=True)
         thread = self.thread_factory(target=self._auto_pause_loop, args=(generation, stop_event, seconds),
                                      daemon=True, name="LongFormAutoPause")
         thread.start()
@@ -520,8 +547,8 @@ class LongFormController:
 
     def _auto_pause_loop(self, generation, stop_event, seconds):
         try:
-            threshold = self.config.get_setting('long_form_silence_threshold', 0) or 0
-            tracker = SilenceTracker(seconds, self._auto_pause_threshold or float(threshold))
+            threshold = float(self.config.get_setting('long_form_silence_threshold', 0) or 0)
+            tracker = SilenceTracker(seconds, threshold, floor=self._auto_pause_floor)
             while not stop_event.wait(AUTO_PAUSE_POLL_S):
                 if not self.auto_pause_step(generation, tracker, seconds):
                     return
@@ -534,11 +561,12 @@ class LongFormController:
         with self.lock:
             if generation != self._auto_pause_generation or self.state != 'RECORDING':
                 return False
-            self._auto_pause_threshold = tracker.threshold
+            self._auto_pause_floor = tracker.floor
             if action == 'hold':
                 trim = max(0.0, seconds - AUTO_PAUSE_KEEP_SILENCE_S)
                 if self.audio_capture.hold_audio(trim_tail_seconds=trim, preroll_seconds=AUTO_PAUSE_PREROLL_S):
-                    print("[LONGFORM] Silence - auto-paused", flush=True)
+                    print(f"[LONGFORM] Silence - auto-paused (level {tracker.level:.5f} < "
+                          f"{tracker.threshold:.5f})", flush=True)
                     self.auto_paused = True
                     self._auto_resumed_at = None
                     self.set_visualizer_state('paused')
@@ -547,7 +575,8 @@ class LongFormController:
                 self._auto_resume_preroll = self.audio_capture.release_audio()
                 self._auto_resumed_at = self.clock()
                 self.auto_paused = False
-                print("[LONGFORM] Speech - resumed", flush=True)
+                print(f"[LONGFORM] Speech - resumed (level {tracker.level:.5f} >= "
+                      f"{tracker.threshold:.5f})", flush=True)
                 self.set_visualizer_state('recording')
                 self.audio_manager.play_cue_sound('start')
         return True
