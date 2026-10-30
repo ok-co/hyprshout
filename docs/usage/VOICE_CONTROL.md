@@ -20,8 +20,11 @@ with a hotkey.
 
 ## How it works
 
-A small always-on wake word model ([openWakeWord](https://github.com/dscripka/openWakeWord)) listens on its own
-microphone stream and nothing else: no audio is transcribed or sent anywhere until you say the start word.
+A small always-on wake word engine listens on its own microphone stream and nothing else: no audio is transcribed
+or sent anywhere until you say the start word. Your transcription model isn't loaded for it and never runs while
+you're silent. There are two [engines](#wake-words): [openWakeWord](https://github.com/dscripka/openWakeWord)
+(one trained model per word) and a [sherpa-onnx](https://k2-fsa.github.io/sherpa/onnx/kws/index.html) keyword
+spotter (any English phrase, no training).
 
 The command session is quiet: no overlay, no media ducking, nothing pasted, only a soft ping when it opens and
 closes. Its audio is transcribed by your configured backend and the text goes to a decision model on
@@ -35,9 +38,9 @@ Confidence scales differ between models, so retune `voice_control_min_confidence
 
 ## Setup
 
-1. Install openWakeWord into the service's Python. Its own requirements pin a tflite runtime that has no
-   builds for current Python versions, so install the ONNX runtime it uses here and then openWakeWord itself
-   without dependencies:
+1. Install a wake word engine into the service's Python. For openWakeWord, the default: its own
+   requirements pin a tflite runtime that has no builds for current Python versions, so install the ONNX
+   runtime it uses here and then openWakeWord itself without dependencies:
 
    ```bash
    ~/.local/share/hyprwhspr/venv/bin/python -m pip install onnxruntime scipy scikit-learn tqdm requests
@@ -45,6 +48,12 @@ Confidence scales differ between models, so retune `voice_control_min_confidence
 
    ```bash
    ~/.local/share/hyprwhspr/venv/bin/python -m pip install --no-deps openwakeword==0.6.0
+   ```
+
+   Or, for [your own phrases](#any-phrase-sherpa-onnx), sherpa-onnx:
+
+   ```bash
+   ~/.local/share/hyprwhspr/venv/bin/python -m pip install sherpa-onnx sentencepiece
    ```
 
 2. Store an OpenRouter API key, if LLM refinement doesn't already use one:
@@ -65,7 +74,8 @@ Confidence scales differ between models, so retune `voice_control_min_confidence
    systemctl --user restart hyprwhspr
    ```
 
-The first start downloads the wake word models (about 5 MB) into `~/.local/share/hyprwhspr/wakeword/`. The journal
+The first start downloads the wake word models (about 5 MB, or an 18 MB archive for sherpa-onnx of which 6 MB
+is kept) into `~/.local/share/hyprwhspr/wakeword/`. The journal
 logs `[VOICE] Listening for wake words` once they're loaded.
 
 Requirements:
@@ -76,7 +86,11 @@ Requirements:
 
 ## Wake words
 
-The start and end word must be different. Pretrained words: `hey_jarvis`, `hey_mycroft`, `alexa`, `hey_rhasspy`.
+The start and end word must be different. `voice_control_engine` picks what detects them.
+
+### Pretrained models (openWakeWord)
+
+The default engine. Pretrained words: `hey_jarvis`, `hey_mycroft`, `alexa`, `hey_rhasspy`.
 
 ```jsonc
 {
@@ -86,7 +100,28 @@ The start and end word must be different. Pretrained words: `hey_jarvis`, `hey_m
 ```
 
 A path to a custom `.onnx` model works too. [openWakeWord](https://github.com/dscripka/openWakeWord) can train one
-for any phrase from synthetic speech.
+for any phrase from synthetic speech, which takes a GPU and about an hour.
+
+### Any phrase (sherpa-onnx)
+
+With `"voice_control_engine": "sherpa"`, a word is any English phrase you write down: no model to train or
+download per word. A small keyword spotter ([sherpa-onnx](https://k2-fsa.github.io/sherpa/onnx/kws/index.html),
+3.3M parameters, about 6 MB) runs on the CPU and only listens for your two phrases.
+
+```jsonc
+{
+    "voice_control_engine": "sherpa",
+    "voice_control_start_word": "hey computer",
+    "voice_control_end_word": "over and out"
+}
+```
+
+- Use English letters and apostrophes; digits and accented letters can't be spelled. Write numbers out ("agent
+  forty seven").
+- Two or three words with distinct sounds work best. Short or common words fire by accident more often.
+- The end phrase can't begin with the start phrase, or the other way round ("computer" and "computer stop").
+- A word fires by accident: raise `voice_control_keyword_threshold` (0.25) a little at a time. Missed: lower it,
+  or raise `voice_control_keyword_boost` (1.0). `voice_control_threshold` doesn't apply to this engine.
 
 The word that ends a dictation is cut from its audio, and any part the recognizer still heard is removed from the
 text. If the last word you dictated goes missing, lower `voice_control_end_trim_seconds`; if bits of the end word
@@ -171,9 +206,12 @@ stays off for them.
 ```jsonc
 {
     "voice_control_enabled": false,
+    "voice_control_engine": "openwakeword",       // or "sherpa": any English phrase as a word
     "voice_control_start_word": "hey_jarvis",
     "voice_control_end_word": "hey_mycroft",
-    "voice_control_threshold": 0.5,               // wake word score that counts as heard (0-1)
+    "voice_control_threshold": 0.5,               // openwakeword: score that counts as heard (0-1)
+    "voice_control_keyword_threshold": 0.25,      // sherpa: trigger probability (0-1)
+    "voice_control_keyword_boost": 1.0,           // sherpa: raise if words are missed
     "voice_control_end_trim_seconds": 1.0,        // audio cut so the end word isn't transcribed
     "voice_control_max_command_seconds": 15,
     "voice_control_cues": true,                   // quiet pings; follows audio_feedback
@@ -191,8 +229,8 @@ stays off for them.
 }
 ```
 
-Words fire by accident? Raise `voice_control_threshold`. Missed? Lower it, or speak the word a little slower. A
+Words fire by accident? Raise `voice_control_threshold` (sherpa: `voice_control_keyword_threshold`). Missed? Lower
+it, or speak the word a little slower. A
 speaker playing near the microphone can trigger them too; a headset avoids that.
 
-The wake word model scores 80 ms of audio in a few milliseconds, a few percent of one CPU core while the service
-runs. Its stream reopens on its own after suspend or an audio server restart.
+Either engine scores 80 ms of audio in a few milliseconds, a few percent of one CPU core while the service runs. Its stream reopens on its own after suspend or an audio server restart.

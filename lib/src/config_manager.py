@@ -133,9 +133,12 @@ def build_default_config():
         # Decisions API picks the action. Words are openWakeWord model names
         # or paths to custom .onnx models. The end word also stops dictations.
         'voice_control_enabled': False,
+        'voice_control_engine': 'openwakeword',  # 'openwakeword' (trained models) or 'sherpa' (any English phrase)
         'voice_control_start_word': 'hey_jarvis',
         'voice_control_end_word': 'hey_mycroft',
         'voice_control_threshold': 0.5,          # Wake word score (0-1) that counts as heard
+        'voice_control_keyword_threshold': 0.25, # sherpa: trigger probability (0-1); raise if words fire by accident
+        'voice_control_keyword_boost': 1.0,      # sherpa: per-token boost; raise if words are missed
         'voice_control_end_trim_seconds': 1.0,   # Audio cut from the end so the end word isn't transcribed
         'voice_control_max_command_seconds': 15, # A command longer than this is dropped
         'voice_control_cues': True,              # Quiet pings when a command opens and closes

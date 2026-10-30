@@ -1,4 +1,9 @@
-"""Always-on wake word listener for voice control (openWakeWord).
+"""Always-on wake word listener for voice control.
+
+Two engines score the stream. openWakeWord runs one trained model per word
+(pretrained names or custom .onnx files). sherpa-onnx runs a small open
+vocabulary keyword spotter: any English phrase works as a word, spelled into
+the model's tokens at start, with no training.
 
 One input stream, separate from the recorder's, is scored for two phrases: a
 start word that opens a voice command and an end word that closes it (or ends
@@ -6,15 +11,21 @@ any running dictation). The same stream doubles as the quiet command
 recorder: begin_capture()/end_capture() keep the 16 kHz audio between the two
 words, so no recording stream has to open and the first word is never lost.
 
-openWakeWord, onnxruntime and sounddevice are imported lazily, only when the
-listener starts, so core stays importable without them. Their ONNX models are
+The engines and sounddevice are imported lazily, only when the listener
+starts, so core stays importable without them. Their ONNX models are
 downloaded once into WAKEWORD_MODELS_DIR.
 """
 
+import hashlib
 import os
 import queue
+import re
+import shutil
+import tarfile
+import tempfile
 import threading
 import time
+import urllib.request
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -32,6 +43,21 @@ SAMPLE_RATE = 16000
 FRAME_SAMPLES = 1280  # openWakeWord scores 80 ms frames
 # Single-score openWakeWord models; 'timer' and 'weather' are multi-class.
 PRETRAINED_WORDS = ('alexa', 'hey_jarvis', 'hey_mycroft', 'hey_rhasspy')
+
+ENGINES = ('openwakeword', 'sherpa')
+# sherpa-onnx's English keyword spotter (zipformer transducer, 3.3M parameters,
+# GigaSpeech). Only the int8 encoder/joiner and the fp32 decoder are kept.
+SHERPA_MODEL = 'sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01'
+SHERPA_MODEL_URL = f'https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/{SHERPA_MODEL}.tar.bz2'
+SHERPA_MODEL_SHA256 = 'f170013b4716e41b62b9bfd809687c207cef798ef9bc6534d524e17af9b6561a'
+SHERPA_MODEL_MAX_BYTES = 64 * 1024 * 1024
+SHERPA_MODEL_FILES = {
+    'tokens': 'tokens.txt',
+    'bpe_model': 'bpe.model',
+    'encoder': 'encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx',
+    'decoder': 'decoder-epoch-12-avg-2-chunk-16-left-64.onnx',
+    'joiner': 'joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx',
+}
 
 # Detection: a word fires once per utterance. It re-arms after its score falls
 # below half the threshold, and nothing fires within MIN_GAP_S of a detection.
@@ -132,6 +158,141 @@ class OpenWakeWordDetector:
         return float(scores.get(self._start_key, 0.0)), float(scores.get(self._end_key, 0.0))
 
 
+def keyword_tokens(word, encode: Callable, vocab) -> str:
+    """The keyword spotter's token line for a phrase: 'hey_jarvis' -> '▁HE Y ▁JA R VI S'.
+
+    encode turns upper-case text into BPE pieces; every piece must be in the
+    model's vocabulary, which only spells English letters and apostrophes.
+    """
+    word = normalize_word(word)
+    if word.endswith('.onnx') or os.sep in word:
+        raise WakeWordError(f"{word}: custom .onnx models need voice_control_engine 'openwakeword'")
+    text = ' '.join(re.split(r'[_\s]+', word)).strip().upper()
+    if not re.fullmatch(r"[A-Z']+( [A-Z']+)*", text):
+        raise WakeWordError(f"wake word {word!r}: the keyword model only spells English letters and apostrophes")
+    tokens = list(encode(text))
+    if not tokens or any(token not in vocab for token in tokens):
+        raise WakeWordError(f"wake word {word!r} can't be spelled with the keyword model's tokens")
+    return ' '.join(tokens)
+
+
+def sherpa_model_files(model_dir: Path, download: Optional[Callable] = None) -> dict:
+    """Paths of the keyword spotter's files, downloaded and verified on first use.
+
+    download(url, destination) writes the release archive to destination.
+    """
+    target = Path(model_dir) / SHERPA_MODEL
+    files = {key: target / name for key, name in SHERPA_MODEL_FILES.items()}
+    if all(path.is_file() and path.stat().st_size > 0 for path in files.values()):
+        return files
+    Path(model_dir).mkdir(parents=True, exist_ok=True)
+    log(f"[VOICE] Downloading keyword spotter model {SHERPA_MODEL}")
+    with tempfile.TemporaryDirectory(dir=model_dir) as tmp:
+        archive = Path(tmp) / f'{SHERPA_MODEL}.tar.bz2'
+        try:
+            (download or _download_bounded)(SHERPA_MODEL_URL, archive)
+        except WakeWordError:
+            raise
+        except Exception as e:
+            raise WakeWordError(f'download of {SHERPA_MODEL} failed: {e}') from e
+        if not archive.is_file():
+            raise WakeWordError(f'download of {SHERPA_MODEL} failed')
+        with archive.open('rb') as f:
+            digest = hashlib.file_digest(f, 'sha256').hexdigest()
+        if digest != SHERPA_MODEL_SHA256:
+            raise WakeWordError(f'{SHERPA_MODEL} does not match its pinned checksum')
+        staged = Path(tmp) / SHERPA_MODEL
+        _extract_sherpa_files(archive, staged)
+        if target.exists():
+            shutil.rmtree(target)
+        staged.rename(target)
+    return files
+
+
+def _download_bounded(url: str, destination: Path):
+    total = 0
+    with urllib.request.urlopen(url, timeout=60) as response, destination.open('wb') as output:
+        while True:
+            block = response.read(64 * 1024)
+            if not block:
+                break
+            total += len(block)
+            if total > SHERPA_MODEL_MAX_BYTES:
+                raise WakeWordError(f'download of {SHERPA_MODEL} exceeded {SHERPA_MODEL_MAX_BYTES} bytes')
+            output.write(block)
+
+
+def _extract_sherpa_files(archive: Path, destination: Path):
+    """Copy only the files the spotter needs; nothing else in the archive is written."""
+    wanted = {f'{SHERPA_MODEL}/{name}' for name in SHERPA_MODEL_FILES.values()}
+    destination.mkdir(parents=True)
+    with tarfile.open(archive, 'r:bz2') as bundle:
+        members = {m.name.lstrip('./'): m for m in bundle.getmembers() if m.name.lstrip('./') in wanted}
+        if set(members) != wanted or not all(m.isfile() for m in members.values()):
+            raise WakeWordError(f'{SHERPA_MODEL} archive is missing model files')
+        for name, member in members.items():
+            source = bundle.extractfile(member)
+            with source, (destination / Path(name).name).open('wb') as output:
+                shutil.copyfileobj(source, output)
+
+
+class SherpaKeywordDetector:
+    """Spots the start and end phrase with sherpa-onnx; a hit scores 1.0 for one frame."""
+
+    def __init__(self, start_word, end_word, model_dir: Path = WAKEWORD_MODELS_DIR, *,
+                 threshold: float = 0.25, boost: float = 1.0, download: Optional[Callable] = None):
+        try:
+            import sentencepiece
+            import sherpa_onnx
+        except ImportError as e:
+            raise WakeWordError(
+                f'sherpa-onnx keyword spotting is not installed ({e.name or e}); see the voice control docs') from e
+        files = sherpa_model_files(model_dir, download)
+        pieces = sentencepiece.SentencePieceProcessor(model_file=str(files['bpe_model']))
+        with open(files['tokens'], encoding='utf-8') as f:
+            vocab = {line.split()[0] for line in f if line.strip()}
+
+        def encode(text):
+            return pieces.encode(text, out_type=str)
+
+        start = keyword_tokens(start_word, encode, vocab)
+        end = keyword_tokens(end_word, encode, vocab)
+        start_words, end_words = start.split(), end.split()
+        shorter = min(len(start_words), len(end_words))
+        if start_words[:shorter] == end_words[:shorter]:
+            raise WakeWordError('the start and end word must differ, and neither may begin with the other')
+        with tempfile.TemporaryDirectory() as tmp:
+            keywords = Path(tmp) / 'keywords.txt'
+            keywords.write_text(f'{start} @start\n{end} @end\n', encoding='utf-8')
+            self._spotter = sherpa_onnx.KeywordSpotter(
+                tokens=str(files['tokens']), encoder=str(files['encoder']),
+                decoder=str(files['decoder']), joiner=str(files['joiner']),
+                keywords_file=str(keywords), num_threads=1, provider='cpu',
+                keywords_score=float(boost), keywords_threshold=float(threshold),
+            )
+        self._stream = self._spotter.create_stream()
+
+    def score(self, frame: np.ndarray):
+        self._stream.accept_waveform(SAMPLE_RATE, frame.astype(np.float32) / 32768.0)
+        hits = set()
+        while self._spotter.is_ready(self._stream):
+            self._spotter.decode_stream(self._stream)
+            hit = self._spotter.get_result(self._stream)
+            if hit:
+                hits.add(hit)
+                self._spotter.reset_stream(self._stream)
+        return (1.0 if 'start' in hits else 0.0), (1.0 if 'end' in hits else 0.0)
+
+
+def make_detector(engine, start_word, end_word, *, keyword_threshold: float = 0.25,
+                  keyword_boost: float = 1.0):
+    if engine == 'openwakeword':
+        return OpenWakeWordDetector(start_word, end_word)
+    if engine == 'sherpa':
+        return SherpaKeywordDetector(start_word, end_word, threshold=keyword_threshold, boost=keyword_boost)
+    raise WakeWordError(f"unknown wake word engine {engine!r}; use {' or '.join(ENGINES)}")
+
+
 def _default_stream_factory(device, samplerate, blocksize, callback):
     import sounddevice as sd
     try:
@@ -172,6 +333,8 @@ class WakeWordListener:
 
     def __init__(self, start_word, end_word, on_event: Callable, *, threshold: float = 0.5,
                  device=None, max_capture_seconds: float = 15.0,
+                 engine: str = 'openwakeword', keyword_threshold: float = 0.25,
+                 keyword_boost: float = 1.0,
                  detector_factory: Optional[Callable] = None,
                  stream_factory: Optional[Callable] = None,
                  clock: Callable[[], float] = time.monotonic):
@@ -182,7 +345,8 @@ class WakeWordListener:
         self._device = device
         self._max_capture_samples = int(max(1.0, float(max_capture_seconds)) * SAMPLE_RATE)
         self._detector_factory = detector_factory or (
-            lambda: OpenWakeWordDetector(start_word, end_word))
+            lambda: make_detector(engine, start_word, end_word, keyword_threshold=keyword_threshold,
+                                  keyword_boost=keyword_boost))
         self._stream_factory = stream_factory or _default_stream_factory
         self._clock = clock
 

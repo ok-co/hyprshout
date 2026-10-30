@@ -21,7 +21,7 @@ from backend_utils import normalize_backend
 from hallucination import is_hallucination
 import voice_command
 from voice_command import SCRATCHPAD_ACTIONS, DecisionError, phrase_for, plan_for, strip_wake_phrase
-from wake_word import SAMPLE_RATE, WakeWordError, WakeWordListener, normalize_word
+from wake_word import ENGINES, SAMPLE_RATE, WakeWordError, WakeWordListener, normalize_word
 
 DEFAULT_START_WORD = 'hey_jarvis'
 DEFAULT_END_WORD = 'hey_mycroft'
@@ -41,6 +41,11 @@ class VoiceControlMixin:
             log(f"[VOICE] Voice control disabled: {reason}")
             self._notify_user("hyprwhspr", f"Voice control disabled: {reason}", urgency="normal")
             return False
+        engine = str(self.config.get_setting('voice_control_engine', 'openwakeword') or '').strip().lower()
+        if engine not in ENGINES:
+            log(f"[VOICE] Voice control disabled: unknown voice_control_engine {engine!r}")
+            self._notify_user("hyprwhspr", f"Voice control: unknown engine {engine!r}", urgency="normal")
+            return False
         try:
             start_word = normalize_word(self.config.get_setting('voice_control_start_word', DEFAULT_START_WORD))
             end_word = normalize_word(self.config.get_setting('voice_control_end_word', DEFAULT_END_WORD))
@@ -58,6 +63,9 @@ class VoiceControlMixin:
             threshold=self._get_float_setting('voice_control_threshold', 0.5),
             device=self.audio_capture.device_id,
             max_capture_seconds=self._get_float_setting('voice_control_max_command_seconds', 15.0),
+            engine=engine,
+            keyword_threshold=self._get_float_setting('voice_control_keyword_threshold', 0.25),
+            keyword_boost=self._get_float_setting('voice_control_keyword_boost', 1.0),
         )
         return self._voice_listener.start()
 

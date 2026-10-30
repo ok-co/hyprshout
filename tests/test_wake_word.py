@@ -1,4 +1,7 @@
+import hashlib
+import io
 import sys
+import tarfile
 import tempfile
 import types
 import unittest
@@ -196,6 +199,211 @@ class ListenerStreamTests(unittest.TestCase):
         with mock.patch.dict(sys.modules, {"openwakeword": None, "openwakeword.model": None}):
             with self.assertRaisesRegex(WakeWordError, "openWakeWord is not installed"):
                 wake_word.OpenWakeWordDetector("hey_jarvis", "hey_mycroft")
+
+
+FAKE_VOCAB = {"▁HE", "Y", "▁COM", "PUT", "ER", "▁OVER", "▁AND", "▁OUT", "▁STOP", "'", "S"}
+
+
+def fake_encode(text):
+    pieces = {"HEY": ["▁HE", "Y"], "COMPUTER": ["▁COM", "PUT", "ER"], "OVER": ["▁OVER"], "AND": ["▁AND"],
+              "OUT": ["▁OUT"], "STOP": ["▁STOP"], "WHAT'S": ["▁WHAT", "'", "S"]}
+    return [piece for word in text.split() for piece in pieces.get(word, ["▁" + word])]
+
+
+class KeywordTokenTests(unittest.TestCase):
+    def test_phrases_in_any_spelling_become_token_lines(self):
+        for word in ("hey computer", "Hey_Computer", " HEY-computer ", "hey  computer"):
+            self.assertEqual(wake_word.keyword_tokens(word, fake_encode, FAKE_VOCAB), "▁HE Y ▁COM PUT ER")
+
+    def test_unspellable_phrases_are_rejected(self):
+        with self.assertRaisesRegex(WakeWordError, "English letters"):
+            wake_word.keyword_tokens("hey zürich", fake_encode, FAKE_VOCAB)
+        with self.assertRaisesRegex(WakeWordError, "English letters"):
+            wake_word.keyword_tokens("agent 47", fake_encode, FAKE_VOCAB)
+        with self.assertRaisesRegex(WakeWordError, "can't be spelled"):
+            wake_word.keyword_tokens("what's up", fake_encode, FAKE_VOCAB)  # ▁WHAT is not in the vocab
+
+    def test_onnx_models_need_the_openwakeword_engine(self):
+        with self.assertRaisesRegex(WakeWordError, "openwakeword"):
+            wake_word.keyword_tokens("~/models/hey_computer.onnx", fake_encode, FAKE_VOCAB)
+
+
+def sherpa_archive(path, extra=None, skip=()):
+    """A release-shaped archive with stub model files; returns its SHA-256."""
+    with tarfile.open(path, "w:bz2") as bundle:
+        names = [n for n in wake_word.SHERPA_MODEL_FILES.values() if n not in skip]
+        entries = [(f"{wake_word.SHERPA_MODEL}/{n}", n.encode()) for n in names] + list(extra or [])
+        for name, data in entries:
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            bundle.addfile(info, io.BytesIO(data))
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+class SherpaModelTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.models = self.root / "wakeword"
+        self.calls = []
+
+    def download_from(self, archive):
+        def download(url, destination):
+            self.calls.append(url)
+            Path(destination).write_bytes(Path(archive).read_bytes())
+        return download
+
+    def test_model_downloads_once_and_keeps_only_the_needed_files(self):
+        archive = self.root / "release.tar.bz2"
+        digest = sherpa_archive(archive, extra=[(f"{wake_word.SHERPA_MODEL}/test_wavs/0.wav", b"wav"),
+                                                ("../escape.txt", b"no")])
+        with mock.patch.object(wake_word, "SHERPA_MODEL_SHA256", digest):
+            files = wake_word.sherpa_model_files(self.models, self.download_from(archive))
+            again = wake_word.sherpa_model_files(self.models, self.download_from(archive))
+        self.assertEqual(again, files)
+        self.assertEqual(self.calls, [wake_word.SHERPA_MODEL_URL])
+        self.assertEqual(files["encoder"].read_bytes(), wake_word.SHERPA_MODEL_FILES["encoder"].encode())
+        self.assertEqual(sorted(p.name for p in (self.models / wake_word.SHERPA_MODEL).iterdir()),
+                         sorted(wake_word.SHERPA_MODEL_FILES.values()))
+        self.assertEqual([p.name for p in self.models.iterdir()], [wake_word.SHERPA_MODEL])
+        self.assertFalse((self.root / "escape.txt").exists())
+
+    def test_checksum_mismatch_installs_nothing(self):
+        archive = self.root / "release.tar.bz2"
+        sherpa_archive(archive)
+        with mock.patch.object(wake_word, "SHERPA_MODEL_SHA256", "0" * 64):
+            with self.assertRaisesRegex(WakeWordError, "checksum"):
+                wake_word.sherpa_model_files(self.models, self.download_from(archive))
+        self.assertEqual(list(self.models.iterdir()), [])
+
+    def test_archive_missing_a_file_is_an_error(self):
+        archive = self.root / "release.tar.bz2"
+        digest = sherpa_archive(archive, skip=(wake_word.SHERPA_MODEL_FILES["joiner"],))
+        with mock.patch.object(wake_word, "SHERPA_MODEL_SHA256", digest):
+            with self.assertRaisesRegex(WakeWordError, "missing model files"):
+                wake_word.sherpa_model_files(self.models, self.download_from(archive))
+        self.assertEqual(list(self.models.iterdir()), [])
+
+    def test_network_errors_become_wake_word_errors(self):
+        def download(url, destination):
+            raise OSError("offline")
+        with self.assertRaisesRegex(WakeWordError, "offline"):
+            wake_word.sherpa_model_files(self.models, download)
+
+
+class FakeSpotter:
+    """sherpa_onnx.KeywordSpotter stand-in: emits scripted results, one per decode."""
+
+    instances = []
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.keywords = Path(kwargs["keywords_file"]).read_text(encoding="utf-8")
+        self.results = []
+        self.received = []
+        self.resets = 0
+        FakeSpotter.instances.append(self)
+
+    def create_stream(self):
+        spotter = self
+
+        class Stream:
+            def accept_waveform(self, rate, samples):
+                spotter.received.append((rate, samples))
+                spotter.pending = 1
+
+        return Stream()
+
+    def is_ready(self, stream):
+        return self.pending > 0
+
+    def decode_stream(self, stream):
+        self.pending -= 1
+
+    def get_result(self, stream):
+        return self.results.pop(0) if self.results else ""
+
+    def reset_stream(self, stream):
+        self.resets += 1
+
+
+class SherpaDetectorTests(unittest.TestCase):
+    def setUp(self):
+        FakeSpotter.instances.clear()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        model = Path(tmp.name) / wake_word.SHERPA_MODEL
+        model.mkdir()
+        for name in wake_word.SHERPA_MODEL_FILES.values():
+            (model / name).write_text("stub", encoding="utf-8")
+        (model / "tokens.txt").write_text("".join(f"{t} {i}\n" for i, t in enumerate(sorted(FAKE_VOCAB))),
+                                          encoding="utf-8")
+        self.model_dir = Path(tmp.name)
+        processor = mock.Mock()
+        processor.encode.side_effect = lambda text, out_type=str: fake_encode(text)
+        modules = {
+            "sherpa_onnx": types.SimpleNamespace(KeywordSpotter=FakeSpotter),
+            "sentencepiece": types.SimpleNamespace(SentencePieceProcessor=mock.Mock(return_value=processor)),
+        }
+        patcher = mock.patch.dict(sys.modules, modules)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def detector(self, start="hey computer", end="over and out", **kwargs):
+        return wake_word.SherpaKeywordDetector(start, end, self.model_dir, **kwargs)
+
+    def test_phrases_and_tuning_reach_the_spotter(self):
+        self.detector(threshold=0.4, boost=2.0)
+        spotter = FakeSpotter.instances[0]
+        self.assertEqual(spotter.keywords, "▁HE Y ▁COM PUT ER @start\n▁OVER ▁AND ▁OUT @end\n")
+        self.assertEqual((spotter.kwargs["keywords_threshold"], spotter.kwargs["keywords_score"]), (0.4, 2.0))
+        self.assertEqual(spotter.kwargs["provider"], "cpu")
+        self.assertFalse(Path(spotter.kwargs["keywords_file"]).exists())  # a temporary file
+
+    def test_hits_score_one_frame_and_reset_the_stream(self):
+        detector = self.detector()
+        spotter = FakeSpotter.instances[0]
+        spotter.results = ["", "start", "end"]
+        pcm = np.full(FRAME_SAMPLES, 16384, dtype=np.int16)
+        self.assertEqual(detector.score(pcm), (0.0, 0.0))
+        self.assertEqual(detector.score(pcm), (1.0, 0.0))
+        self.assertEqual(detector.score(pcm), (0.0, 1.0))
+        self.assertEqual(spotter.resets, 2)
+        rate, samples = spotter.received[0]
+        self.assertEqual(rate, SAMPLE_RATE)
+        self.assertEqual(samples.dtype, np.float32)
+        self.assertAlmostEqual(float(samples[0]), 0.5)
+
+    def test_listener_fires_once_per_hit(self):
+        detector = self.detector()
+        FakeSpotter.instances[0].results = ["start"]
+        events = []
+        clock = Clock()
+        listener = WakeWordListener("hey computer", "over and out", lambda kind, at: events.append(kind), clock=clock)
+        for _ in range(5):
+            listener.process_block(frame(), detector)
+            clock.now += 0.08
+        self.assertEqual(events, ["start"])
+
+    def test_words_must_differ_and_not_begin_with_each_other(self):
+        for start, end in (("hey computer", "Hey_Computer"), ("hey computer", "hey computer stop"),
+                           ("hey computer stop", "hey computer")):
+            with self.subTest(start=start, end=end), self.assertRaisesRegex(WakeWordError, "begin with"):
+                self.detector(start, end)
+        self.detector("hey computer", "hey stop")  # a shared first word is fine
+
+    def test_missing_packages_are_reported_as_wake_word_errors(self):
+        with mock.patch.dict(sys.modules, {"sherpa_onnx": None}):
+            with self.assertRaisesRegex(WakeWordError, "sherpa-onnx keyword spotting is not installed"):
+                self.detector()
+
+    def test_engines_are_chosen_by_name(self):
+        with mock.patch.object(wake_word, "SherpaKeywordDetector") as sherpa:
+            wake_word.make_detector("sherpa", "a", "b", keyword_threshold=0.3, keyword_boost=1.5)
+        sherpa.assert_called_once_with("a", "b", threshold=0.3, boost=1.5)
+        with self.assertRaisesRegex(WakeWordError, "unknown wake word engine"):
+            wake_word.make_detector("porcupine", "a", "b")
 
 
 if __name__ == "__main__":

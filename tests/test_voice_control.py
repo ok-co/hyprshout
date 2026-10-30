@@ -507,6 +507,30 @@ class VoiceControlTests(unittest.TestCase):
                     listener.assert_not_called()
                     self.assertIn(reason, app._notify_user.call_args.args[1])
 
+    def test_engine_settings_reach_the_listener(self):
+        app = self.app(voice_control_enabled=True, voice_control_engine=' Sherpa ',
+                       voice_control_start_word='hey computer', voice_control_end_word='over and out',
+                       voice_control_keyword_threshold=0.4, voice_control_keyword_boost=2.0)
+        app._voice_listener = None
+        app.audio_capture = mock.Mock(device_id=None)
+        listener = mock.Mock()
+        with patch_app_global(self.App, 'WakeWordListener', listener):
+            self.assertTrue(app._start_voice_control())
+        args, kwargs = listener.call_args
+        self.assertEqual(args[:2], ('hey_computer', 'over_and_out'))
+        self.assertEqual((kwargs['engine'], kwargs['keyword_threshold'], kwargs['keyword_boost']),
+                         ('sherpa', 0.4, 2.0))
+        self.assertEqual((app._voice_start_phrase, app._voice_end_phrase), ('hey computer', 'over and out'))
+
+    def test_unknown_engine_disables_voice_control(self):
+        app = self.app(voice_control_enabled=True, voice_control_engine='porcupine')
+        app._voice_listener = None
+        app.audio_capture = mock.Mock(device_id=None)
+        with patch_app_global(self.App, 'WakeWordListener', mock.Mock()) as listener:
+            self.assertFalse(app._start_voice_control())
+        listener.assert_not_called()
+        self.assertIn('porcupine', app._notify_user.call_args.args[1])
+
     def test_disabled_voice_control_starts_nothing(self):
         app = self.app()
         app._voice_listener = None
