@@ -331,26 +331,59 @@
     "voice_control_enabled": {
       "type": "boolean",
       "default": false,
-      "description": "Hands-free control by voice. The start word opens a quiet command session, the end word closes it, and a decision model picks what happens next: a dictation (pasted, raw, translated, or applied to the scratchpad draft), a scratchpad operation (paste, copy, undo, clear, read aloud), paste/copy of the last dictation, or a question to the voice assistant, answered aloud. The end word also stops any running recording. Needs openWakeWord in the service's Python, an OpenRouter API key ('hyprwhspr config llm'), PipeWire or PulseAudio, and a local or REST backend; not available in long_form mode."
+      "description": "Hands-free control by voice. The start word opens a quiet command session, the end word closes it, and a decision model picks what happens next: a dictation (pasted, raw, translated, or applied to the scratchpad draft), a scratchpad operation (paste, copy, undo, clear, read aloud), paste/copy of the last dictation, or a question to the voice assistant, answered aloud. The end word also stops any running recording. Needs a wake word engine (voice_control_engine) in the service's Python, an OpenRouter API key ('hyprwhspr config llm'), PipeWire or PulseAudio, and a local or REST backend; not available in long_form mode."
+    },
+    "voice_control_engine": {
+      "type": "string",
+      "enum": ["openwakeword", "sherpa", "vosk"],
+      "default": "openwakeword",
+      "description": "Wake word engine. openwakeword runs one trained model per word (pretrained names or custom .onnx files). sherpa runs a small open-vocabulary keyword spotter (sherpa-onnx, about 6 MB, CPU): any English phrase works as a word, with no training. vosk runs a small recognizer for one language (voice_control_vosk_model, about 40-50 MB, CPU) restricted to the two phrases: any words in its vocabulary, no training."
     },
     "voice_control_start_word": {
       "type": "string",
       "minLength": 1,
       "default": "hey_jarvis",
-      "description": "Wake word that opens a voice command: an openWakeWord model name (alexa, hey_jarvis, hey_mycroft, hey_rhasspy) or a path to a custom .onnx model. Pretrained models download on first use."
+      "description": "Wake word that opens a voice command. With the openwakeword engine: a model name (alexa, hey_jarvis, hey_mycroft, hey_rhasspy) or a path to a custom .onnx model. With sherpa: any English phrase, such as 'hey computer'. With vosk: a phrase in the model's language, such as 'hej komputer'. Models download on first use."
     },
     "voice_control_end_word": {
       "type": "string",
       "minLength": 1,
       "default": "hey_mycroft",
-      "description": "Wake word that ends a voice command or any recording; must differ from voice_control_start_word. Model name or .onnx path."
+      "description": "Wake word that ends a voice command or any recording; must differ from voice_control_start_word. Model name or .onnx path (openwakeword), or a phrase that does not begin with the start word (sherpa, vosk)."
     },
     "voice_control_threshold": {
       "type": "number",
       "exclusiveMinimum": 0,
       "maximum": 1,
       "default": 0.5,
-      "description": "Wake word score that counts as heard. Raise it if words fire by accident; lower it if they are missed."
+      "description": "Wake word score that counts as heard (openwakeword engine). Raise it if words fire by accident; lower it if they are missed."
+    },
+    "voice_control_keyword_threshold": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "exclusiveMaximum": 1,
+      "default": 0.25,
+      "description": "Trigger probability for a phrase (sherpa engine). Raise it if words fire by accident; lower it if they are missed."
+    },
+    "voice_control_keyword_boost": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 10,
+      "default": 1.0,
+      "description": "Boost for each token of a phrase while decoding (sherpa engine). Raise it if words are missed; lower it if they fire by accident."
+    },
+    "voice_control_vosk_model": {
+      "type": "string",
+      "minLength": 1,
+      "default": "en-us",
+      "description": "Vosk model (vosk engine): a language code such as pl, de, fr, es, it, nl, ru, cs or en-us, whose small model downloads on first use, or a path to an unpacked Vosk model directory."
+    },
+    "voice_control_vosk_confidence": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 1,
+      "default": 0.9,
+      "description": "Lowest confidence each word of a phrase needs to count as heard (vosk engine). Raise it if words fire by accident; lower it if they are missed."
     },
     "voice_control_end_trim_seconds": {
       "type": "number",
@@ -925,7 +958,7 @@
     "long_form_pause_word": {
       "type": "string",
       "default": "",
-      "description": "Long-form mode wake word (openWakeWord: hey_jarvis, hey_mycroft, alexa, hey_rhasspy, or a path to a custom .onnx model) that pauses the session; say it again to resume. Speech is not recorded in between. Empty = off. Needs openWakeWord and PipeWire or PulseAudio"
+      "description": "Long-form mode wake word that pauses the session; say it again to resume. Speech is not recorded in between. Detected by voice_control_engine: an openWakeWord name (hey_jarvis, hey_mycroft, alexa, hey_rhasspy) or .onnx path, or a phrase for sherpa or vosk. Empty = off. Needs the engine installed and PipeWire or PulseAudio"
     },
     "continuous_silence_seconds": {
       "type": "number",
