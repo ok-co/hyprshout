@@ -89,7 +89,7 @@ Requirements:
 
 - PipeWire or PulseAudio: the wake word stream shares the microphone with recordings, which raw ALSA can't do
 - A local or REST [backend](../backends/OVERVIEW.md); the realtime WebSocket backend can't transcribe commands
-- Any recording mode except `long_form`
+- Any recording mode except `long_form`, which has a [pause word](RECORDING_MODES.md#pause-word) instead
 
 ## Wake words
 

@@ -82,6 +82,12 @@ class AudioCapture:
         self.audio_data = []
         self._buffered_samples = 0
         self._buffer_capped = False
+        # Silence gate (long-form auto-pause): while held, chunks go to a short
+        # pre-roll instead of the buffer, so the start of speech isn't lost.
+        self._gate_held = False
+        self._gate_preroll = deque()
+        self._gate_preroll_samples = 0
+        self._gate_preroll_max = 0
         self.current_level = 0.0
         # Rolling window of recent RMS values.
         self._level_history = deque(maxlen=8)
@@ -1139,6 +1145,7 @@ class AudioCapture:
             # Clear previous audio data
             with self.lock:
                 self._reset_audio_buffer_locked()
+                self._reset_gate_locked()
                 self.is_recording = True
                 stop_event = threading.Event()
                 self._record_stop_event = stop_event
@@ -1220,6 +1227,64 @@ class AudioCapture:
         self._buffered_samples = 0
         self._buffer_capped = False
 
+    def _reset_gate_locked(self):
+        """Open the silence gate and drop its pre-roll. Must be called with self.lock held."""
+        self._gate_held = False
+        self._gate_preroll = deque()
+        self._gate_preroll_samples = 0
+
+    @property
+    def gate_held(self) -> bool:
+        with self.lock:
+            return self._gate_held
+
+    def hold_audio(self, trim_tail_seconds: float = 0.0, preroll_seconds: float = 1.0) -> bool:
+        """Stop buffering while the recording keeps running; False if not recording.
+
+        The last trim_tail_seconds already buffered are dropped (the silence
+        that triggered the hold). Until release_audio(), chunks only feed a
+        preroll_seconds pre-roll and the level meters.
+        """
+        with self.lock:
+            if not self.is_recording:
+                return False
+            drop = int(max(0.0, trim_tail_seconds) * self.sample_rate)
+            while drop > 0 and self.audio_data:
+                last = self.audio_data[-1]
+                if len(last) <= drop:
+                    self.audio_data.pop()
+                    drop -= len(last)
+                    self._buffered_samples -= len(last)
+                else:
+                    self.audio_data[-1] = last[:len(last) - drop]
+                    self._buffered_samples -= drop
+                    drop = 0
+            self._gate_held = True
+            self._gate_preroll = deque()
+            self._gate_preroll_samples = 0
+            self._gate_preroll_max = int(max(0.0, preroll_seconds) * self.sample_rate)
+            return True
+
+    def release_audio(self) -> float:
+        """Resume buffering, starting with the pre-roll; returns the pre-roll's seconds."""
+        with self.lock:
+            if not self._gate_held:
+                return 0.0
+            preroll = list(self._gate_preroll)
+            samples = self._gate_preroll_samples
+            self._reset_gate_locked()
+            for chunk in preroll:
+                self.audio_data.append(chunk)
+            self._buffered_samples += samples
+            return samples / self.sample_rate
+
+    def _gate_chunk_locked(self, chunk):
+        """Keep a held chunk in the bounded pre-roll. Must be called with self.lock held."""
+        self._gate_preroll.append(chunk)
+        self._gate_preroll_samples += len(chunk)
+        while self._gate_preroll and self._gate_preroll_samples - len(self._gate_preroll[0]) >= self._gate_preroll_max:
+            self._gate_preroll_samples -= len(self._gate_preroll.popleft())
+
     def _collect_audio_array(self) -> Optional[np.ndarray]:
         """Concatenate audio_data into a flat float32 array. Must be called with self.lock held."""
         if not self.audio_data:
@@ -1290,6 +1355,7 @@ class AudioCapture:
             audio_array = self._collect_audio_array()
             # Clear buffer after extracting
             self._reset_audio_buffer_locked()
+            self._reset_gate_locked()
 
         log("[AUDIO] Recording paused")
         return audio_array
@@ -1440,7 +1506,9 @@ class AudioCapture:
 
                         # Store audio data, up to the buffer cap
                         chunk_copy = audio_chunk.copy()
-                        if self._buffered_samples < self.sample_rate * _MAX_BUFFER_SECONDS:
+                        if self._gate_held:
+                            self._gate_chunk_locked(chunk_copy)
+                        elif self._buffered_samples < self.sample_rate * _MAX_BUFFER_SECONDS:
                             self.audio_data.append(chunk_copy)
                             self._buffered_samples += len(chunk_copy)
                         elif not self._buffer_capped:

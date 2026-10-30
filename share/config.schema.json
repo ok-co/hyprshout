@@ -942,6 +942,24 @@
       "default": 300,
       "description": "Auto-save interval in seconds for long-form recording (default: 5 minutes)"
     },
+    "long_form_auto_pause_seconds": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 60,
+      "default": 0,
+      "description": "Long-form auto-pause: after this many seconds of silence the recording stops keeping audio (paused indicator and a quiet ping) and resumes on its own when you speak again. 0 = off"
+    },
+    "long_form_silence_threshold": {
+      "type": "number",
+      "minimum": 0,
+      "default": 0,
+      "description": "Audio level below which long-form auto-pause counts as silence. 0 = calibrate from the start of each session"
+    },
+    "long_form_pause_word": {
+      "type": "string",
+      "default": "",
+      "description": "Long-form mode wake word that pauses the session; say it again to resume. Speech is not recorded in between. Detected by voice_control_engine: an openWakeWord name (hey_jarvis, hey_mycroft, alexa, hey_rhasspy) or .onnx path, or a phrase for sherpa or vosk. Empty = off. Needs the engine installed and PipeWire or PulseAudio"
+    },
     "continuous_silence_seconds": {
       "type": "number",
       "minimum": 0.5,

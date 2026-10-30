@@ -180,7 +180,7 @@ def _ensure_downloaded(url: str, model_dir: Path, download: Optional[Callable]) 
 
 
 class OpenWakeWordDetector:
-    """Scores 80 ms int16 frames for the start and end word."""
+    """Scores 80 ms int16 frames for the start and end word (end_word None: start only)."""
 
     def __init__(self, start_word, end_word, model_dir: Path = WAKEWORD_MODELS_DIR):
         try:
@@ -189,23 +189,24 @@ class OpenWakeWordDetector:
             raise WakeWordError(
                 f'openWakeWord is not installed ({e.name or e}); see the voice control docs') from e
         start_path = resolve_model_path(start_word, model_dir)
-        end_path = resolve_model_path(end_word, model_dir)
-        if start_path.resolve() == end_path.resolve():
+        end_path = resolve_model_path(end_word, model_dir) if end_word is not None else None
+        if end_path is not None and start_path.resolve() == end_path.resolve():
             raise WakeWordError('the start and end word must be different models')
         melspec, embedding = feature_model_paths(model_dir)
         self._model = Model(
-            wakeword_models=[str(start_path), str(end_path)],
+            wakeword_models=[str(path) for path in (start_path, end_path) if path is not None],
             inference_framework='onnx',
             melspec_model_path=str(melspec),
             embedding_model_path=str(embedding),
         )
         # openWakeWord keys each model by its file name without extension
         self._start_key = start_path.stem
-        self._end_key = end_path.stem
+        self._end_key = end_path.stem if end_path is not None else None
 
     def score(self, frame: np.ndarray):
         scores = self._model.predict(frame)
-        return float(scores.get(self._start_key, 0.0)), float(scores.get(self._end_key, 0.0))
+        end = float(scores.get(self._end_key, 0.0)) if self._end_key else 0.0
+        return float(scores.get(self._start_key, 0.0)), end
 
 
 def keyword_tokens(word, encode: Callable, vocab) -> str:
@@ -291,7 +292,8 @@ def _extract_sherpa_files(archive: Path, destination: Path):
 
 
 class SherpaKeywordDetector:
-    """Spots the start and end phrase with sherpa-onnx; a hit scores 1.0 for one frame."""
+    """Spots the start and end phrase (end_word None: start only) with sherpa-onnx;
+    a hit scores 1.0 for one frame."""
 
     def __init__(self, start_word, end_word, model_dir: Path = WAKEWORD_MODELS_DIR, *,
                  threshold: float = 0.25, boost: float = 1.0, download: Optional[Callable] = None):
@@ -309,15 +311,17 @@ class SherpaKeywordDetector:
         def encode(text):
             return pieces.encode(text, out_type=str)
 
-        start = keyword_tokens(start_word, encode, vocab)
-        end = keyword_tokens(end_word, encode, vocab)
-        start_words, end_words = start.split(), end.split()
-        shorter = min(len(start_words), len(end_words))
-        if start_words[:shorter] == end_words[:shorter]:
-            raise WakeWordError('the start and end word must differ, and neither may begin with the other')
+        lines = {'start': keyword_tokens(start_word, encode, vocab)}
+        if end_word is not None:
+            lines['end'] = keyword_tokens(end_word, encode, vocab)
+            start_words, end_words = lines['start'].split(), lines['end'].split()
+            shorter = min(len(start_words), len(end_words))
+            if start_words[:shorter] == end_words[:shorter]:
+                raise WakeWordError('the start and end word must differ, and neither may begin with the other')
         with tempfile.TemporaryDirectory() as tmp:
             keywords = Path(tmp) / 'keywords.txt'
-            keywords.write_text(f'{start} @start\n{end} @end\n', encoding='utf-8')
+            keywords.write_text(''.join(f'{tokens} @{kind}\n' for kind, tokens in lines.items()),
+                                encoding='utf-8')
             self._spotter = sherpa_onnx.KeywordSpotter(
                 tokens=str(files['tokens']), encoder=str(files['encoder']),
                 decoder=str(files['decoder']), joiner=str(files['joiner']),
@@ -441,7 +445,7 @@ def _vosk_missing_words(vosk, model, words):
 
 
 class VoskKeywordDetector:
-    """Recognizes only the two phrases with a small Vosk model.
+    """Recognizes only the two phrases (end_word None: start only) with a small Vosk model.
 
     A phrase counts when a finished utterance contains all its words, each
     at least min_confidence. Utterances finish at the next pause, so
@@ -454,19 +458,22 @@ class VoskKeywordDetector:
             import vosk
         except ImportError as e:
             raise WakeWordError(f'Vosk is not installed ({e.name or e}); see the voice control docs') from e
-        self._phrases = {'start': vosk_phrase(start_word).split(), 'end': vosk_phrase(end_word).split()}
-        start, end = self._phrases['start'], self._phrases['end']
-        shorter = min(len(start), len(end))
-        if start[:shorter] == end[:shorter]:
-            raise WakeWordError('the start and end word must differ, and neither may begin with the other')
+        self._phrases = {'start': vosk_phrase(start_word).split()}
+        if end_word is not None:
+            self._phrases['end'] = vosk_phrase(end_word).split()
+            start, end = self._phrases['start'], self._phrases['end']
+            shorter = min(len(start), len(end))
+            if start[:shorter] == end[:shorter]:
+                raise WakeWordError('the start and end word must differ, and neither may begin with the other')
+        words = sorted({w for phrase in self._phrases.values() for w in phrase})
         path = vosk_model_dir(model, model_dir, download)
         vosk.SetLogLevel(-1)
         self._model = vosk.Model(str(path))
-        missing = _vosk_missing_words(vosk, self._model, sorted(set(start + end)))
+        missing = _vosk_missing_words(vosk, self._model, words)
         if missing:
             raise WakeWordError(f"not in the {path.name} vocabulary: {', '.join(missing)}; "
                                 'pick other words or spellings')
-        grammar = [' '.join(start), ' '.join(end), '[unk]']
+        grammar = [' '.join(phrase) for phrase in self._phrases.values()] + ['[unk]']
         self._recognizer = vosk.KaldiRecognizer(self._model, SAMPLE_RATE, json.dumps(grammar, ensure_ascii=False))
         self._recognizer.SetWords(True)
         self._min_confidence = float(min_confidence)
@@ -532,6 +539,8 @@ class _Resampler:
 
 class WakeWordListener:
     """Run the wake word stream on a worker thread and report detections.
+
+    end_word may be None for a listener with a single word, which fires 'start'.
 
     on_event(kind, detected_at) runs on the worker thread with kind 'start',
     'end' or 'capture_limit' and a time.monotonic() stamp of when the word
@@ -601,7 +610,8 @@ class WakeWordListener:
             log(f"[VOICE] Wake word listener disabled: {e}")
             return
         self.ready.set()
-        log(f"[VOICE] Listening for wake words ({self._start_word} / {self._end_word})")
+        words = self._start_word if self._end_word is None else f"{self._start_word} / {self._end_word}"
+        log(f"[VOICE] Listening for wake words ({words})")
         attempt = 0
         while not self._stop.is_set():
             stream = None

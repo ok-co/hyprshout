@@ -198,6 +198,23 @@ class ListenerStreamTests(unittest.TestCase):
         self.assertFalse(listener.ready.is_set())
         self.assertIn("not installed", log.call_args[0][0])
 
+    def test_a_single_word_detector_scores_only_its_word(self):
+        model = mock.Mock()
+        model.predict.return_value = {"hey_jarvis_v0.1": 0.9}
+        fake = types.ModuleType("openwakeword.model")
+        fake.Model = mock.Mock(return_value=model)
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.dict(sys.modules, {"openwakeword": types.ModuleType("openwakeword"),
+                                              "openwakeword.model": fake}), \
+                mock.patch.object(wake_word, "resolve_model_path",
+                                  side_effect=lambda word, model_dir: Path(tmp) / f"{word}_v0.1.onnx"), \
+                mock.patch.object(wake_word, "feature_model_paths",
+                                  return_value=(Path(tmp) / "mel.onnx", Path(tmp) / "emb.onnx")):
+            detector = wake_word.OpenWakeWordDetector("hey_jarvis", None)
+        self.assertEqual(fake.Model.call_args.kwargs["wakeword_models"],
+                         [str(Path(tmp) / "hey_jarvis_v0.1.onnx")])
+        self.assertEqual(detector.score(np.zeros(FRAME_SAMPLES, dtype=np.int16)), (0.9, 0.0))
+
     def test_missing_openwakeword_is_reported_as_wake_word_error(self):
         with mock.patch.dict(sys.modules, {"openwakeword": None, "openwakeword.model": None}):
             with self.assertRaisesRegex(WakeWordError, "openWakeWord is not installed"):
@@ -396,6 +413,13 @@ class SherpaDetectorTests(unittest.TestCase):
                 self.detector(start, end)
         self.detector("hey computer", "hey stop")  # a shared first word is fine
 
+    def test_a_single_word_listener_spots_only_the_start_word(self):
+        detector = self.detector("hey computer", None)
+        spotter = FakeSpotter.instances[-1]
+        self.assertEqual(spotter.keywords, "▁HE Y ▁COM PUT ER @start\n")
+        spotter.results = ["start"]
+        self.assertEqual(detector.score(np.zeros(FRAME_SAMPLES, dtype=np.int16)), (1.0, 0.0))
+
     def test_missing_packages_are_reported_as_wake_word_errors(self):
         with mock.patch.dict(sys.modules, {"sherpa_onnx": None}):
             with self.assertRaisesRegex(WakeWordError, "sherpa-onnx keyword spotting is not installed"):
@@ -570,6 +594,12 @@ class VoskDetectorTests(unittest.TestCase):
         self.assertEqual(scores[29], (0.0, 1.0))
         self.assertAlmostEqual(detector.hit_lag["end"], 2.4 - 2.2)
         self.assertEqual(sum(1 for s in scores if any(s)), 2)
+
+    def test_a_single_word_listener_recognizes_only_the_start_word(self):
+        detector = self.detector("przerwa", None)
+        self.assertEqual(FakeRecognizer.instances[-1].grammar, ["przerwa", "[unk]"])
+        FakeRecognizer.instances[-1].results = {1: self.words(("przerwa", 1.0, 0.05))}
+        self.assertEqual(detector.score(np.zeros(FRAME_SAMPLES, dtype=np.int16)), (1.0, 0.0))
 
     def test_confidence_is_configurable(self):
         detector = self.detector(min_confidence=0.5)

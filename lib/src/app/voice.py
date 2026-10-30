@@ -10,6 +10,9 @@ run at once.
 
 Manual control always wins: a hotkey or CLI start cancels a pending command,
 and the cancel shortcut or command cancels it too.
+
+In long_form mode the listener runs one word instead, the pause word, which
+pauses and resumes the long-form session.
 """
 
 import threading
@@ -33,17 +36,21 @@ class VoiceControlMixin:
     # ------------------------ Lifecycle ------------------------
 
     def _start_voice_control(self):
-        """Start the wake word listener when voice_control_enabled; False if it can't run."""
+        """Start the wake word listener when voice_control_enabled; False if it can't run.
+
+        long_form mode runs the pause word listener instead.
+        """
+        long_form = self.config.get_setting('recording_mode', 'toggle') == 'long_form'
         if not self.config.get_setting('voice_control_enabled', False):
-            return False
+            return self._start_pause_word() if long_form else False
         reason = self._voice_control_unsupported()
         if reason:
             log(f"[VOICE] Voice control disabled: {reason}")
             self._notify_user("hyprwhspr", f"Voice control disabled: {reason}", urgency="normal")
-            return False
-        engine = str(self.config.get_setting('voice_control_engine', 'openwakeword') or '').strip().lower()
-        if engine not in ENGINES:
-            log(f"[VOICE] Voice control disabled: unknown voice_control_engine {engine!r}")
+            return self._start_pause_word() if long_form else False
+        engine_options = self._wake_engine_options()
+        if engine_options is None:
+            engine = self.config.get_setting('voice_control_engine', 'openwakeword')
             self._notify_user("hyprwhspr", f"Voice control: unknown engine {engine!r}", urgency="normal")
             return False
         try:
@@ -63,13 +70,23 @@ class VoiceControlMixin:
             threshold=self._get_float_setting('voice_control_threshold', 0.5),
             device=self.audio_capture.device_id,
             max_capture_seconds=self._get_float_setting('voice_control_max_command_seconds', 15.0),
-            engine=engine,
-            keyword_threshold=self._get_float_setting('voice_control_keyword_threshold', 0.25),
-            keyword_boost=self._get_float_setting('voice_control_keyword_boost', 1.0),
-            vosk_model=self.config.get_setting('voice_control_vosk_model', 'en-us'),
-            vosk_confidence=self._get_float_setting('voice_control_vosk_confidence', 0.9),
+            **engine_options,
         )
         return self._voice_listener.start()
+
+    def _wake_engine_options(self):
+        """WakeWordListener engine settings; None (logged) for an unknown voice_control_engine."""
+        engine = str(self.config.get_setting('voice_control_engine', 'openwakeword') or '').strip().lower()
+        if engine not in ENGINES:
+            log(f"[VOICE] Voice control disabled: unknown voice_control_engine {engine!r}")
+            return None
+        return {
+            'engine': engine,
+            'keyword_threshold': self._get_float_setting('voice_control_keyword_threshold', 0.25),
+            'keyword_boost': self._get_float_setting('voice_control_keyword_boost', 1.0),
+            'vosk_model': self.config.get_setting('voice_control_vosk_model', 'en-us'),
+            'vosk_confidence': self._get_float_setting('voice_control_vosk_confidence', 0.9),
+        }
 
     def _voice_control_unsupported(self):
         if self.config.get_setting('recording_mode', 'toggle') == 'long_form':
@@ -80,6 +97,39 @@ class VoiceControlMixin:
         if not self.audio_capture.input_is_shared():
             return 'the microphone is raw ALSA; the wake word stream needs PipeWire or PulseAudio'
         return None
+
+    def _start_pause_word(self):
+        """Long-form mode: listen for long_form_pause_word; False when unset or it can't run."""
+        word = (self.config.get_setting('long_form_pause_word', '') or '').strip()
+        if not word:
+            return False
+        if not self.audio_capture.input_is_shared():
+            log("[VOICE] Pause word disabled: the microphone is raw ALSA; "
+                "the wake word stream needs PipeWire or PulseAudio")
+            return False
+        try:
+            word = normalize_word(word)
+        except WakeWordError as e:
+            log(f"[VOICE] Pause word disabled: {e}")
+            return False
+        engine_options = self._wake_engine_options()
+        if engine_options is None:
+            return False
+        self._voice_listener = WakeWordListener(
+            word, None, self._on_pause_word,
+            threshold=self._get_float_setting('voice_control_threshold', 0.5),
+            device=self.audio_capture.device_id,
+            **engine_options,
+        )
+        return self._voice_listener.start()
+
+    def _on_pause_word(self, kind, detected_at):
+        if kind != 'start':
+            return
+        trim = self._get_float_setting('voice_control_end_trim_seconds', 1.0)
+        # Pausing joins the capture thread; keep the listener's worker free
+        threading.Thread(target=self._longform.pause_word, args=(detected_at, trim),
+                         daemon=True, name="PauseWord").start()
 
     def _stop_voice_control(self):
         listener = getattr(self, '_voice_listener', None)
