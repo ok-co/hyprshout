@@ -63,7 +63,9 @@ class LongformReliabilityTests(unittest.TestCase):
             play_error_sound=mock.Mock(),
         )
         controller = LongFormController(
-            config=SimpleNamespace(get_setting=lambda key, default=None: 1),
+            config=SimpleNamespace(
+                get_setting=lambda key, default=None: default if key == 'long_form_auto_pause_seconds' else 1
+            ),
             audio_capture=audio_capture,
             audio_manager=audio_manager,
             whisper_manager=SimpleNamespace(

@@ -1,6 +1,7 @@
 """Long-form recording state machine and persistence orchestration."""
 
 import threading
+import time
 
 try:
     from .hallucination import is_hallucination
@@ -12,6 +13,47 @@ except ImportError:
     from paths import LONGFORM_STATE_FILE
     from segment_manager import SegmentManager
     from text_injector import InjectionOutcome
+
+
+AUTO_PAUSE_POLL_S = 0.1        # seconds between level checks
+AUTO_PAUSE_KEEP_SILENCE_S = 0.5  # trailing quiet kept before a hold
+AUTO_PAUSE_PREROLL_S = 1.0     # audio kept from before speech resumes a hold
+PAUSE_WORD_RESUME_WINDOW_S = 0.5  # beyond the word: an auto-resume this close to it was the word
+
+
+class SilenceTracker:
+    """Decide when a recording goes quiet ('hold') and when speech returns ('release').
+
+    threshold 0 calibrates from the first polls: twice their quietest level,
+    the rule continuous mode uses.
+    """
+
+    CALIBRATION_POLLS = 6
+
+    def __init__(self, pause_seconds, threshold=0.0, poll_seconds=AUTO_PAUSE_POLL_S):
+        self.polls_needed = max(1, int(round(pause_seconds / poll_seconds)))
+        self.threshold = threshold if threshold and threshold > 0 else None
+        self._calibration = []
+        self._quiet = 0
+
+    def step(self, level, held):
+        if self.threshold is None:
+            self._calibration.append(level)
+            if len(self._calibration) < self.CALIBRATION_POLLS:
+                return None
+            self.threshold = max(min(self._calibration) * 2, 2e-4)
+            print(f"[LONGFORM] Auto-pause calibrated threshold={self.threshold:.5f}", flush=True)
+            return None
+        if level >= self.threshold:
+            self._quiet = 0
+            return 'release' if held else None
+        if held:
+            return None
+        self._quiet += 1
+        if self._quiet >= self.polls_needed:
+            self._quiet = 0
+            return 'hold'
+        return None
 
 
 class LongFormController:
@@ -36,6 +78,8 @@ class LongFormController:
         release_recording=None,
         segment_manager_factory=SegmentManager,
         timer_factory=threading.Timer,
+        thread_factory=threading.Thread,
+        clock=time.monotonic,
         state_file=LONGFORM_STATE_FILE,
     ):
         self.config = config
@@ -55,6 +99,8 @@ class LongFormController:
         self.hallucination_markers = hallucination_markers
         self.segment_manager_factory = segment_manager_factory
         self.timer_factory = timer_factory
+        self.thread_factory = thread_factory
+        self.clock = clock
         self.state_file = state_file
 
         self.state = 'IDLE'
@@ -64,6 +110,15 @@ class LongFormController:
         self.segment_manager = None
         self.auto_save_timer = None
         self.error_audio = None
+
+        # Auto-pause: a monitor holds the capture buffer through silences while
+        # the session stays RECORDING. The generation retires a stale monitor.
+        self.auto_paused = False
+        self._auto_pause_generation = 0
+        self._auto_pause_stop = None
+        self._auto_pause_threshold = None  # calibrated once per session
+        self._auto_resumed_at = None
+        self._auto_resume_preroll = 0.0
 
     def ensure_initialized(self):
         if self.segment_manager is not None:
@@ -96,6 +151,7 @@ class LongFormController:
         with self.lock:
             if self.state in ('RECORDING', 'PAUSED'):
                 if self.state == 'RECORDING':
+                    self.stop_auto_pause_monitor()
                     audio_data = self.audio_capture.pause_recording()
                     pending_audio = None
                     if audio_data is not None and len(audio_data) > 0:
@@ -152,6 +208,34 @@ class LongFormController:
             else:
                 print(f"[CONTROL] Long-form in {self.state} state, ignoring cancel request", flush=True)
 
+    def pause_word(self, detected_at, trim_seconds=1.0):
+        """The pause word: pause a recording session, or resume a paused one.
+
+        The word's own audio (trim_seconds plus the time since it fired) is
+        cut from the segment it ends.
+        """
+        self.ensure_initialized()
+        with self.lock:
+            if self.state == 'RECORDING':
+                print("[LONGFORM] Pause word - pausing", flush=True)
+                self.pause_recording(trim_tail_seconds=self._pause_word_trim(detected_at, trim_seconds))
+            elif self.state == 'PAUSED':
+                print("[LONGFORM] Pause word - resuming", flush=True)
+                self.resume_recording()
+            else:
+                print(f"[LONGFORM] Pause word ignored in {self.state} state", flush=True)
+
+    def _pause_word_trim(self, detected_at, trim_seconds):
+        if self.auto_paused:
+            return 0.0  # the word only reached the pre-roll, which a pause drops
+        now = self.clock()
+        trim = max(0.0, trim_seconds) + max(0.0, now - detected_at)
+        resumed_at = self._auto_resumed_at
+        if resumed_at is not None and detected_at - resumed_at <= trim_seconds + PAUSE_WORD_RESUME_WINDOW_S:
+            # The word itself resumed an auto-pause: drop all of it
+            trim = max(trim, self._auto_resume_preroll + (now - resumed_at))
+        return trim
+
     def _abandon_claim(self):
         """Drop a claim whose work failed, and free anyone waiting on it."""
         self.release_recording()
@@ -193,15 +277,20 @@ class LongFormController:
             self._abandon_claim()
             return
 
+        self._auto_pause_threshold = None
         self._set_state('RECORDING', visualizer='recording')
         self.show_mic_osd()
         self.start_auto_save_timer()
+        self.start_auto_pause_monitor()
         self.audio_manager.play_start_sound()
 
-    def pause_recording(self):
+    def pause_recording(self, trim_tail_seconds=0.0):
         print("[LONGFORM] Pausing recording")
         self.stop_auto_save_timer()
+        self.stop_auto_pause_monitor()
         audio_data = self.audio_capture.pause_recording()
+        if audio_data is not None and trim_tail_seconds > 0:
+            audio_data = audio_data[:max(0, len(audio_data) - int(trim_tail_seconds * self.audio_capture.sample_rate))]
         if audio_data is not None and len(audio_data) > 0:
             if self.segment_manager.save_segment(audio_data) is None:
                 self.persistence_failed(audio_data)
@@ -220,6 +309,7 @@ class LongFormController:
                 return False
             print("[LONGFORM] Audio server restarted - pausing session", flush=True)
             self.stop_auto_save_timer()
+            self.stop_auto_pause_monitor()
             audio_data = self.audio_capture.pause_recording()
             if audio_data is not None and len(audio_data) > 0:
                 if self.segment_manager.save_segment(audio_data) is None:
@@ -252,6 +342,7 @@ class LongFormController:
             raise
 
         self.start_auto_save_timer()
+        self.start_auto_pause_monitor()
         self.audio_manager.play_start_sound()
 
     def cancel(self):
@@ -262,6 +353,7 @@ class LongFormController:
         self.notify_capture("", final=True)
         try:
             self.stop_auto_save_timer()
+            self.stop_auto_pause_monitor()
             self.audio_capture.stop_recording()
             self.segment_manager.clear_session()
             self.error_audio = None
@@ -282,6 +374,7 @@ class LongFormController:
 
     def persistence_failed(self, audio_data):
         self.stop_auto_save_timer()
+        self.stop_auto_pause_monitor()
         self.error_audio = self.segment_manager.concatenate_readable(audio_data)
         self._set_state('ERROR', visualizer='error')
         self.audio_manager.play_error_sound()
@@ -291,6 +384,7 @@ class LongFormController:
         # auto-save timer is still armed and must not outlive this call on
         # either the refused or the accepted path
         self.stop_auto_save_timer()
+        self.stop_auto_pause_monitor()
 
         # Idempotent while RECORDING (already claimed); from PAUSED or ERROR it
         # re-takes the backend, which is what keeps a submit from overlapping a
@@ -397,6 +491,66 @@ class LongFormController:
         if self.auto_save_timer is not None:
             self.auto_save_timer.cancel()
             self.auto_save_timer = None
+
+    def start_auto_pause_monitor(self):
+        """Hold the buffer through silences; long_form_auto_pause_seconds 0 is off. Lock held."""
+        self.stop_auto_pause_monitor()
+        try:
+            seconds = float(self.config.get_setting('long_form_auto_pause_seconds', 0) or 0)
+        except (TypeError, ValueError):
+            seconds = 0.0
+        if seconds <= 0:
+            return
+        self._auto_pause_generation += 1
+        generation = self._auto_pause_generation
+        stop_event = threading.Event()
+        self._auto_pause_stop = stop_event
+        thread = self.thread_factory(target=self._auto_pause_loop, args=(generation, stop_event, seconds),
+                                     daemon=True, name="LongFormAutoPause")
+        thread.start()
+
+    def stop_auto_pause_monitor(self):
+        """Retire the monitor. Lock held; a hold ends with the capture it belongs to."""
+        self._auto_pause_generation += 1
+        if self._auto_pause_stop is not None:
+            self._auto_pause_stop.set()
+            self._auto_pause_stop = None
+        self.auto_paused = False
+        self._auto_resumed_at = None
+
+    def _auto_pause_loop(self, generation, stop_event, seconds):
+        try:
+            threshold = self.config.get_setting('long_form_silence_threshold', 0) or 0
+            tracker = SilenceTracker(seconds, self._auto_pause_threshold or float(threshold))
+            while not stop_event.wait(AUTO_PAUSE_POLL_S):
+                if not self.auto_pause_step(generation, tracker, seconds):
+                    return
+        except Exception as e:
+            print(f"[LONGFORM] Auto-pause monitor failed: {e}", flush=True)
+
+    def auto_pause_step(self, generation, tracker, seconds):
+        """One level check; False once the monitor is retired."""
+        action = tracker.step(self.audio_capture.rolling_avg_level, self.auto_paused)
+        with self.lock:
+            if generation != self._auto_pause_generation or self.state != 'RECORDING':
+                return False
+            self._auto_pause_threshold = tracker.threshold
+            if action == 'hold':
+                trim = max(0.0, seconds - AUTO_PAUSE_KEEP_SILENCE_S)
+                if self.audio_capture.hold_audio(trim_tail_seconds=trim, preroll_seconds=AUTO_PAUSE_PREROLL_S):
+                    print("[LONGFORM] Silence - auto-paused", flush=True)
+                    self.auto_paused = True
+                    self._auto_resumed_at = None
+                    self.set_visualizer_state('paused')
+                    self.audio_manager.play_cue_sound('stop')
+            elif action == 'release':
+                self._auto_resume_preroll = self.audio_capture.release_audio()
+                self._auto_resumed_at = self.clock()
+                self.auto_paused = False
+                print("[LONGFORM] Speech - resumed", flush=True)
+                self.set_visualizer_state('recording')
+                self.audio_manager.play_cue_sound('start')
+        return True
 
     def write_state(self, state):
         try:

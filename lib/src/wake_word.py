@@ -104,7 +104,7 @@ def _ensure_downloaded(url: str, model_dir: Path, download: Optional[Callable]) 
 
 
 class OpenWakeWordDetector:
-    """Scores 80 ms int16 frames for the start and end word."""
+    """Scores 80 ms int16 frames for the start and end word (end_word None: start only)."""
 
     def __init__(self, start_word, end_word, model_dir: Path = WAKEWORD_MODELS_DIR):
         try:
@@ -113,23 +113,24 @@ class OpenWakeWordDetector:
             raise WakeWordError(
                 f'openWakeWord is not installed ({e.name or e}); see the voice control docs') from e
         start_path = resolve_model_path(start_word, model_dir)
-        end_path = resolve_model_path(end_word, model_dir)
-        if start_path.resolve() == end_path.resolve():
+        end_path = resolve_model_path(end_word, model_dir) if end_word is not None else None
+        if end_path is not None and start_path.resolve() == end_path.resolve():
             raise WakeWordError('the start and end word must be different models')
         melspec, embedding = feature_model_paths(model_dir)
         self._model = Model(
-            wakeword_models=[str(start_path), str(end_path)],
+            wakeword_models=[str(path) for path in (start_path, end_path) if path is not None],
             inference_framework='onnx',
             melspec_model_path=str(melspec),
             embedding_model_path=str(embedding),
         )
         # openWakeWord keys each model by its file name without extension
         self._start_key = start_path.stem
-        self._end_key = end_path.stem
+        self._end_key = end_path.stem if end_path is not None else None
 
     def score(self, frame: np.ndarray):
         scores = self._model.predict(frame)
-        return float(scores.get(self._start_key, 0.0)), float(scores.get(self._end_key, 0.0))
+        end = float(scores.get(self._end_key, 0.0)) if self._end_key else 0.0
+        return float(scores.get(self._start_key, 0.0)), end
 
 
 def _default_stream_factory(device, samplerate, blocksize, callback):
@@ -164,6 +165,8 @@ class _Resampler:
 
 class WakeWordListener:
     """Run the wake word stream on a worker thread and report detections.
+
+    end_word may be None for a listener with a single word, which fires 'start'.
 
     on_event(kind, detected_at) runs on the worker thread with kind 'start',
     'end' or 'capture_limit' and a time.monotonic() stamp. It must return
@@ -226,7 +229,8 @@ class WakeWordListener:
             log(f"[VOICE] Wake word listener disabled: {e}")
             return
         self.ready.set()
-        log(f"[VOICE] Listening for wake words ({self._start_word} / {self._end_word})")
+        words = self._start_word if self._end_word is None else f"{self._start_word} / {self._end_word}"
+        log(f"[VOICE] Listening for wake words ({words})")
         attempt = 0
         while not self._stop.is_set():
             stream = None

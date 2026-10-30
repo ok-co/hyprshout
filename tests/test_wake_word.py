@@ -192,6 +192,23 @@ class ListenerStreamTests(unittest.TestCase):
         self.assertFalse(listener.ready.is_set())
         self.assertIn("not installed", log.call_args[0][0])
 
+    def test_a_single_word_detector_scores_only_its_word(self):
+        model = mock.Mock()
+        model.predict.return_value = {"hey_jarvis_v0.1": 0.9}
+        fake = types.ModuleType("openwakeword.model")
+        fake.Model = mock.Mock(return_value=model)
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.dict(sys.modules, {"openwakeword": types.ModuleType("openwakeword"),
+                                              "openwakeword.model": fake}), \
+                mock.patch.object(wake_word, "resolve_model_path",
+                                  side_effect=lambda word, model_dir: Path(tmp) / f"{word}_v0.1.onnx"), \
+                mock.patch.object(wake_word, "feature_model_paths",
+                                  return_value=(Path(tmp) / "mel.onnx", Path(tmp) / "emb.onnx")):
+            detector = wake_word.OpenWakeWordDetector("hey_jarvis", None)
+        self.assertEqual(fake.Model.call_args.kwargs["wakeword_models"],
+                         [str(Path(tmp) / "hey_jarvis_v0.1.onnx")])
+        self.assertEqual(detector.score(np.zeros(FRAME_SAMPLES, dtype=np.int16)), (0.9, 0.0))
+
     def test_missing_openwakeword_is_reported_as_wake_word_error(self):
         with mock.patch.dict(sys.modules, {"openwakeword": None, "openwakeword.model": None}):
             with self.assertRaisesRegex(WakeWordError, "openWakeWord is not installed"):

@@ -89,3 +89,39 @@ Extended recording with pause/resume support:
 - Submit shortcut processes all recorded segments and pastes transcription
 - Segments are auto-saved periodically to disk for crash recovery
 - Old segments are automatically cleaned up when storage limit is reached
+
+### Auto-pause on silence
+
+Stop keeping audio while you're quiet, so long sessions stay small and transcribe faster:
+
+```jsonc
+{
+    "long_form_auto_pause_seconds": 3,  // Quiet this long pauses. 0 (default) = off.
+    "long_form_silence_threshold": 0    // Silence level. 0 (default) = calibrate each session.
+}
+```
+
+- After the quiet, the indicator switches to paused and a soft ping plays; the silence is dropped.
+- Speak again and recording resumes on its own, with a soft ping. The second before you spoke is kept, so the
+  first word isn't cut.
+- The session stays open: the shortcut still pauses it for real, and submit sends everything recorded.
+- Calibration hears the first half second of the session, so start in quiet. The log prints the calibrated
+  level. If quiet doesn't pause, or speech doesn't resume, set `long_form_silence_threshold` from there.
+
+### Pause word
+
+Say a word to pause, so you can talk without it being recorded. Say it again to resume:
+
+```jsonc
+{
+    "long_form_pause_word": "hey_rhasspy"  // "" (default) = off
+}
+```
+
+- Same as the pause shortcut: the stop sound and paused indicator, then the start sound on resume.
+- Speech while paused isn't recorded or auto-resumed; the word itself is cut from the recording.
+- Pretrained words are `hey_jarvis`, `hey_mycroft`, `alexa` and `hey_rhasspy`, or give the path to a custom
+  `.onnx` model. Set it up like [voice control](VOICE_CONTROL.md#setup): openWakeWord installed, and PipeWire or
+  PulseAudio. No API key is needed.
+- `voice_control_threshold` and `voice_control_end_trim_seconds` tune it the same way they tune
+  [wake words](VOICE_CONTROL.md#wake-words).
