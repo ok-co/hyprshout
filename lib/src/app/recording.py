@@ -12,6 +12,7 @@ from live_typing import LiveTypingSession
 from service_log import log
 from backend_utils import normalize_backend
 from voice_command import strip_wake_phrase
+from voice_phrases import remove_phrase
 
 try:
     import numpy as np
@@ -589,6 +590,7 @@ class RecordingMixin:
 
     def _cancel_recording(self):
         """Cancel recording and discard audio without transcribing or injecting text"""
+        self._voice_close_dictation_window()
         with self._recording_lock:
             recording = self.is_recording
             if recording:
@@ -596,6 +598,8 @@ class RecordingMixin:
                 self.is_recording = False
                 self._current_language_override = None
                 self._current_route = 'paste'
+                self._voice_plan = None
+                self._voice_strip_phrases = []
                 self._ptt_reset()
         if not recording:
             # Nothing recording: cancel drops a pending voice command and silences the assistant
@@ -639,12 +643,15 @@ class RecordingMixin:
         except Exception as e:
             log(f"[WARN] Failed to save debug recording: {e}")
 
-    def _stop_recording(self, expected_session=None, trim_tail_seconds=0.0):
+    def _stop_recording(self, expected_session=None, trim_tail_seconds=0.0, tail_phrase=None):
         """Stop voice recording and process audio
 
         trim_tail_seconds cuts the end of the audio: the end word that stopped
-        the recording, which is also stripped from the transcript.
+        the recording (or tail_phrase, the start word said inside it), which
+        is also stripped from the transcript.
         """
+        if self.is_recording and (expected_session is None or self._recording_session is expected_session):
+            self._voice_recording_ended()
         with self._recording_lock:
             if (not self.is_recording
                     or (expected_session is not None and self._recording_session is not expected_session)):
@@ -654,8 +661,10 @@ class RecordingMixin:
             session = self._recording_session
             voice_plan = getattr(self, '_voice_plan', None)
             self._voice_plan = None
+            strip_phrases = getattr(self, '_voice_strip_phrases', None) or []
+            self._voice_strip_phrases = []
             self._ptt_reset()
-        end_phrase = getattr(self, '_voice_end_phrase', None) if trim_tail_seconds > 0 else None
+        end_phrase = (tail_phrase or getattr(self, '_voice_end_phrase', None)) if trim_tail_seconds > 0 else None
 
         try:
             log("Recording stopped")
@@ -713,10 +722,12 @@ class RecordingMixin:
             else:
                 # Valid audio data - process it
                 self.audio_manager.play_stop_sound()
-                if voice_plan is None and end_phrase is None:
-                    self._process_audio(audio_data)
-                else:
-                    self._process_audio(audio_data, voice_plan=voice_plan, end_phrase=end_phrase)
+                options = {}
+                if voice_plan is not None or end_phrase is not None:
+                    options.update(voice_plan=voice_plan, end_phrase=end_phrase)
+                if strip_phrases:
+                    options['strip_phrases'] = strip_phrases
+                self._process_audio(audio_data, **options)
                 
             # Clear language override after transcription completes
             self._current_language_override = None
@@ -753,11 +764,12 @@ class RecordingMixin:
             return audio_data  # nothing was said; the transcript strip handles the word
         return audio_data[:-cut]
 
-    def _process_audio(self, audio_data, voice_plan=None, end_phrase=None):
+    def _process_audio(self, audio_data, voice_plan=None, end_phrase=None, strip_phrases=()):
         """Process captured audio through Whisper
 
         voice_plan: delivery of a voice-started dictation (voice_command.DictationPlan)
         end_phrase: the end word that stopped the recording, stripped from the transcript
+        strip_phrases: words said to voice control mid-dictation, removed wherever they are
         """
         with self._recording_lock:
             if self.is_processing:
@@ -775,6 +787,9 @@ class RecordingMixin:
 
             if end_phrase and transcription:
                 transcription = strip_wake_phrase(transcription.strip(), end_phrase=end_phrase)
+            for phrase in strip_phrases or ():
+                if transcription:
+                    transcription = remove_phrase(transcription, phrase)
 
             # Words already typed live: type the rest, no hallucination re-check
             live_outcome = self._finish_live_typing(transcription)
@@ -857,6 +872,9 @@ class RecordingMixin:
         try:
             outcome = self.text_injector.inject_text(
                 text, translate=route == 'translate', **self._voice_delivery_options(voice_plan))
+            if (outcome == InjectionOutcome.INJECTED and voice_plan is not None and voice_plan.submit
+                    and not self.config.get_setting('auto_submit', False)):
+                self.text_injector.send_enter()
             if outcome == InjectionOutcome.FAILED:
                 log(f"[ERROR] Text injection failed ({len(text)} chars)")
                 notify = True

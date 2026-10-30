@@ -1436,6 +1436,10 @@ except Exception:
         """Send Enter key if auto_submit is enabled"""
         if not (self.config_manager and self.config_manager.get_setting('auto_submit', False)):
             return
+        self.send_enter(cancel_event)
+
+    def send_enter(self, cancel_event=None):
+        """Press Enter in the focused app, as auto_submit does after a paste"""
         if cancel_event is not None and cancel_event.is_set():
             return
         try:

@@ -331,7 +331,7 @@
     "voice_control_enabled": {
       "type": "boolean",
       "default": false,
-      "description": "Hands-free control by voice. The start word opens a quiet command session, the end word closes it, and a decision model picks what happens next: a dictation (pasted, raw, translated, or applied to the scratchpad draft), a scratchpad operation (paste, copy, undo, clear, read aloud), paste/copy of the last dictation, or a question to the voice assistant, answered aloud. The end word also stops any running recording. Needs a wake word engine (voice_control_engine) in the service's Python, an OpenRouter API key ('hyprwhspr config llm'), PipeWire or PulseAudio, and a local or REST backend; not available in long_form mode."
+      "description": "Hands-free control by voice. The start word opens a quiet command session, which the end word or the pause after the command closes. A known phrase (voice_control_phrases: send the draft, undo, cancel, ...) runs at once; anything else goes to a decision model that picks what happens next: a dictation (pasted, raw, translated, or applied to the scratchpad draft), a scratchpad operation (paste, copy, undo, clear, read aloud, an instruction that edits the draft), paste/copy of the last dictation, or a question to the voice assistant, answered aloud. The end word also stops any running recording; the start word inside one listens for a dictation command (voice_control_in_dictation). Needs a wake word engine (voice_control_engine) in the service's Python, an OpenRouter API key ('hyprwhspr config llm') for the decision model, PipeWire or PulseAudio, and a local or REST backend (or the vosk engine); not available in long_form mode."
     },
     "voice_control_engine": {
       "type": "string",
@@ -435,6 +435,247 @@
       "items": { "type": "string", "minLength": 1 },
       "default": ["en", "de", "fr", "es", "it", "pt", "nl", "pl"],
       "description": "Language codes a command can name, as the language to dictate in or to translate into. Empty: commands never set a language."
+    },
+    "voice_control_end_on_pause": {
+      "type": "boolean",
+      "default": true,
+      "description": "End a voice command at the pause after it (voice_control_pause_seconds), so the end word is optional. The end word still ends a command at once."
+    },
+    "voice_control_pause_seconds": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 10,
+      "default": 1.5,
+      "description": "Seconds of quiet after speech that end a voice command, or a command said inside a dictation. Quiet follows the room's noise level."
+    },
+    "voice_control_silence_seconds": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 60,
+      "default": 5,
+      "description": "A command with nothing said for this many seconds after the start word is cancelled. 0 = wait for the end word or voice_control_max_command_seconds."
+    },
+    "voice_control_in_dictation": {
+      "type": "boolean",
+      "default": true,
+      "description": "The start word inside a dictation listens for a dictation command: nothing (finish), done, submit (paste and press Enter), cancel, into the draft, translate, raw, ask, keep going. What was said from the start word on is cut from the dictation. Not in continuous mode or while live typing."
+    },
+    "voice_control_command_transcriber": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "backend",
+        "vosk"
+      ],
+      "default": "auto",
+      "description": "What transcribes a voice command that isn't a known phrase. backend: the transcription backend. vosk: the Vosk wake word engine, offline and without loading the backend. auto: the backend, or Vosk when the backend can't (realtime-ws, model not loaded). Vosk only with voice_control_engine 'vosk'."
+    },
+    "voice_control_announce": {
+      "type": "boolean",
+      "default": true,
+      "description": "Show a brief notification of what each voice command did (Dictating, Cancelled, Into the draft, ...)."
+    },
+    "voice_control_phrases": {
+      "type": "object",
+      "default": {},
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cancel": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "dictate": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "dictate_raw": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "translate": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "scratchpad": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "scratchpad_paste": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "scratchpad_copy": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "scratchpad_undo": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "scratchpad_clear": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "scratchpad_speak": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "draft_translate": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "draft_shorten": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "draft_polish": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "draft_list": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "paste_last": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "copy_last": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "assistant": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "help": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "dictation": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "finish": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "submit": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "cancel": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "scratchpad": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "raw": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "translate": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "ask": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "continue": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      },
+      "description": "Your own spoken phrases. 'command' phrases follow the start word, 'dictation' phrases follow it inside a dictation. An action listed here replaces its built-in phrases in every language; an empty list turns it off. Example: {\"command\": {\"cancel\": [\"forget it\"]}}."
     },
     "assistant_model": {
       "type": ["string", "null"],

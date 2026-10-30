@@ -280,6 +280,9 @@ class hyprwhsprApp(RecordingMixin, ShortcutsMixin, SilenceMixin, FeedbackMixin, 
         self._voice_plan = None
         self._voice_start_phrase = None
         self._voice_end_phrase = None
+        self._voice_phrasebook = None   # voice_phrases.PhraseBook, built when voice control starts
+        self._voice_window_at = None    # when the start word opened a window inside a dictation
+        self._voice_strip_phrases = []  # words said to voice control mid-dictation, cut from its text
         self._assistant = None  # voice_assistant.Conversation, made on the first question
         self._assistant_speech = None  # SpeechPlayer for the assistant's replies, made on first use
 
