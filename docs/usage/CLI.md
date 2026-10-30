@@ -58,6 +58,18 @@ duration gate); `server_vad`; `manual_commit`; or `provider_managed`. `boundary_
 `silence_auto_stop`, or `continuous_silence`. Continuous silence flushing and realtime server VAD can turn pauses into
 independently punctuated segments. Trace does not change VAD or silence defaults.
 
+## Settings
+
+```bash
+hyprwhspr settings                 # full-screen editor for every setting, API key and prompt
+hyprwhspr config                   # the same, from a terminal
+hyprwhspr config show [--all]      # print your overrides (or every setting)
+hyprwhspr config edit              # open config.json in $EDITOR
+hyprwhspr config validate          # check the config against the schema
+```
+
+See [Settings editor](../CONFIGURATION.md#settings-editor).
+
 ## LLM refinement
 
 ```bash
